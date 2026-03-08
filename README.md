@@ -5,7 +5,7 @@ movesmart/
 │
 ├── data/
 │   ├── raw/                # raw downloaded data
-│   └── processed/              # master cleaned dataset
+│   └── processed/          # master cleaned dataset
 │
 ├── notebooks/
 │   ├── 01_data.ipynb       # data cleaning & preprocessing
