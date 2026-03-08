@@ -1,5 +1,6 @@
 # movesmart
 
+```
 movesmart/
 │
 ├── data/
@@ -23,3 +24,4 @@ movesmart/
 ├── requirements.txt        # project dependencies
 │
 └── README.md               # project documentation
+```
