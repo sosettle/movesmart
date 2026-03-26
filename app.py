@@ -1,6 +1,11 @@
+"""
+streamlit app
+"""
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
+import pandas as pd
+from src import recommender
 
 # --- Page Config ---
 st.set_page_config(
@@ -12,12 +17,14 @@ st.set_page_config(
 # Dummy Data Functions
 # -------------------------
 
+
 def dummy_recommendations(user_weights):
     return [
         {"name": "Denver", "affordability": 0.5, "jobs": 0.7, "health": 0.9, "text": "Outdoor lifestyle, strong economy, and great access to mountains.", "lat": 39.7392, "lon":-104.9903, "cluster": "Mountain Hub"},
         {"name": "Austin", "affordability": 0.6, "jobs": 0.9, "health": 0.8, "text": "Tech hub with music culture and fast population growth.", "lat":30.2672, "lon":-97.7431, "cluster": "Tech Oasis"},
         {"name": "Seattle", "affordability": 0.4, "jobs": 0.85, "health": 0.9, "text": "Major tech jobs with beautiful nature and waterfront.", "lat": 47.6062, "lon": -122.3321, "cluster": "Coastal Elite"}
     ]
+
 
 def dummy_similar_cities(city_name):
     """Return similar cities with scores and text"""
@@ -60,6 +67,17 @@ def dummy_city(city_name):
             "lat": 37.55,
             "long": 121.99
         }
+
+#--------------
+
+#---------------
+standardized_indicies_df = pd.read_csv("data/processed/standardized_indicies_df.csv")
+standardized_indicies_df = standardized_indicies_df.drop(columns=['Unnamed: 0'])
+
+
+
+
+
 
 # -------------------------   
 # Initialize Session State
@@ -199,18 +217,18 @@ def city_card_html(city):
         return f"""
         <div class="city-card">
             <div>
-                <span class="badge">{city['cluster']}</span>
-                <div class="city-name">{city['name']}</div>
-                <p class="city-desc">{city['text']}</p>
+                <span class="badge">{city['cluster_k6']}</span>
+                <div class="city-name">{city['cbsa_name_y']}</div>
+                <p class="city-desc">{city['tagline']}</p>
             </div>
             <div class="stat-column">
-                <span class="stat-item">💰 Affordability: {city['affordability']}</span>
-                <span class="stat-item">💼 Jobs: {city['jobs']}</span>
-                <span class="stat-item">❤️ Health: {city['health']}</span>
-                <span class="stat-item">🌍 Diversity: {city['health']}</span>
-                <span class="stat-item">🌡️ Climate: {city['health']}</span>
-                <span class="stat-item">🛡️ Safety: {city['health']}</span>
-                <span class="stat-item">🎓 Education: {city['health']}</span>
+                <span class="stat-item">💰 Affordability: {city['affordability_score']}</span>
+                <span class="stat-item">💼 Jobs: {city['job_growth_score']}</span>
+                <span class="stat-item">❤️ Health: {city['health_score']}</span>
+                <span class="stat-item">🌍 Diversity: {city['diversity_score']}</span>
+                <span class="stat-item">🌡️ Climate: {city['weather_warmth_score']}</span>
+                <span class="stat-item">🛡️ Safety: {city['safety_score']}</span>
+                <span class="stat-item">🎓 Education: {city['education_score']}</span>
              </div>
         </div>
         """
@@ -240,13 +258,44 @@ if st.session_state.page == "home":
 
     with col1:
         st.subheader("Preferences")
-        f_afford = st.slider("Affordability", 0.0, 1.0, 0.5)
-        f_jobs = st.slider("Job Opportunities", 0.0, 1.0, 0.5)
-        f_health = st.slider("Health", 0.0, 1.0, 0.5)
-        f_safety = st.slider("Safety", 0.0, 1.0, 0.5)
-        
+        affordability_score = st.slider("Affordability", 0.0, 5.0, 0.5)
+        job_growth_score = st.slider("Job Growth", 0.0, 5.0, 0.5)
+        health_score = st.slider("Health", 0.0, 5.0, 0.5)
+        safety_score = st.slider("Safety", 0.0, 5.0, 0.5)
+        education_score = st.slider("Education", 0.0, 5.0, 0.5)
+        walkability_score = st.slider("Walkability", 0.0, 5.0, 0.5)
+        diversity_score = st.slider("Diversity", 0.0, 5.0, 0.5)
+        urban_score = st.slider("Urban", 0.0, 5.0, 0.5)
+        weather_warmth_score = st.slider("Weather Warmth", 0.0, 5.0, 0.5)
+        weather_mildness_score = st.slider("Weather Mildness", 0.0, 5.0, 0.5)
+
         if st.button("Find My City", use_container_width=True, type="primary"):
-            st.session_state.recommendations = dummy_recommendations([f_afford, f_jobs, f_health, f_safety])
+            # example user inputs for streamlit
+            user_inputs = {
+                "affordability_score": affordability_score,
+                "safety_score": safety_score,
+                "job_growth_score": job_growth_score,
+                "education_score": education_score,
+                "health_score": health_score,
+                "walkability_score": walkability_score,
+                "diversity_score": diversity_score,
+                "urban_score": urban_score,
+                "weather_warmth_score": weather_warmth_score,
+                "weather_mildness_score": weather_mildness_score,
+            }
+
+            results = recommender.recommended_cities(
+                df=standardized_indicies_df,
+                user_inputs=user_inputs,
+                user_income=50000,
+                housing_mode="rent",
+                top_n=10
+            )
+
+            results = recommender.add_text_to_cbsa(results).to_dict(orient='records')
+            print(type(results))
+
+            st.session_state.recommendations = results
 
     with col2:
         st.subheader("Map View")
@@ -256,8 +305,8 @@ if st.session_state.page == "home":
         if st.session_state.recommendations:
             for city in st.session_state.recommendations:
                 folium.Marker(
-                    location=[city["lat"], city["lon"]],
-                    popup=city["name"],
+                    location=[city["centroid_lat"], city["centroid_lon"]],
+                    popup=city["cbsa_name_y"],
                     icon=folium.Icon(color="cadetblue", icon="info-sign")
                 ).add_to(m)
         
@@ -279,7 +328,9 @@ if st.session_state.page == "home":
             for j, city in enumerate(rec[i:i+3]):
                 with cols[j]:
                     st.markdown(city_card_html(city), unsafe_allow_html=True)
-                    if st.button("Explore Similar Cluster", key=f"cluster_{city['name']}"):
+                    with st.expander("📖 About this metro"):
+                        st.write(city['summary'])
+                    if st.button("Explore Similar Cluster", key=f"cluster_{city['cbsa_name_y']}"):
                         st.session_state.selected_cluster = city["cluster"]
                         st.session_state.page = "cluster_page"
                         st.rerun()
