@@ -74,8 +74,22 @@ def dummy_city(city_name):
 standardized_indicies_df = pd.read_csv("data/processed/standardized_indicies_df.csv")
 standardized_indicies_df = standardized_indicies_df.drop(columns=['Unnamed: 0'])
 
+sample_cbsa = ["San Francisco-Oakland-Fremont, CA",
+               "Austin-Round Rock-San Marcos, TX",
+               "Dallas-Fort Worth-Arlington, TX",
+               "Seattle-Tacoma-Bellevue, WA",
+               "Raleigh-Cary, NC",
+               "Denver-Aurora-Centennial, CO",
+               "New York-Newark-Jersey City, NY-NJ"
+               "Charlotte-Concord-Gastonia, NC-SC",
+               "San Jose-Sunnyvale-Santa Clara, CA",
+               "Los Angeles-Long Beach-Anaheim, CA"
 
+               ]
 
+sample_cbsa = [12420, 19100, 19740, 31080, 39580, 41860, 41940, 42660]
+standardized_indicies_df = standardized_indicies_df[standardized_indicies_df['cbsa_code'].isin(sample_cbsa)]
+print(len(standardized_indicies_df))
 
 
 
@@ -258,20 +272,22 @@ if st.session_state.page == "home":
 
     with col1:
         st.subheader("Preferences")
-        affordability_score = st.slider("Affordability", 0.0, 5.0, 0.5)
-        job_growth_score = st.slider("Job Growth", 0.0, 5.0, 0.5)
-        health_score = st.slider("Health", 0.0, 5.0, 0.5)
-        safety_score = st.slider("Safety", 0.0, 5.0, 0.5)
-        education_score = st.slider("Education", 0.0, 5.0, 0.5)
-        walkability_score = st.slider("Walkability", 0.0, 5.0, 0.5)
-        diversity_score = st.slider("Diversity", 0.0, 5.0, 0.5)
-        urban_score = st.slider("Urban", 0.0, 5.0, 0.5)
-        weather_warmth_score = st.slider("Weather Warmth", 0.0, 5.0, 0.5)
-        weather_mildness_score = st.slider("Weather Mildness", 0.0, 5.0, 0.5)
+        user_income=st.text_input("Enter your annual income", placeholder="e.g. 50000")
+        affordability_score = st.slider("Affordability", 0.0, 5.0, 1.0)
+        job_growth_score = st.slider("Job Growth", 0.0, 5.0, 1.0)
+        health_score = st.slider("Health", 0.0, 5.0, 1.0)
+        safety_score = st.slider("Safety", 0.0, 5.0, 1.0)
+        education_score = st.slider("Education", 0.0, 5.0, 1.0)
+        walkability_score = st.slider("Walkability", 0.0, 5.0, 1.0)
+        diversity_score = st.slider("Diversity", 0.0, 5.0, 1.0)
+        urban_score = st.slider("Urban", 0.0, 5.0, 1.0)
+        weather_warmth_score = st.slider("Weather Warmth", 0.0, 5.0, 1.0)
+        weather_mildness_score = st.slider("Weather Mildness", 0.0, 5.0, 1.0)
 
         if st.button("Find My City", use_container_width=True, type="primary"):
             # example user inputs for streamlit
             user_inputs = {
+                "user_income":user_income,
                 "affordability_score": affordability_score,
                 "safety_score": safety_score,
                 "job_growth_score": job_growth_score,
@@ -287,13 +303,13 @@ if st.session_state.page == "home":
             results = recommender.recommended_cities(
                 df=standardized_indicies_df,
                 user_inputs=user_inputs,
-                user_income=50000,
+                user_income=500000,
                 housing_mode="rent",
                 top_n=10
             )
 
             results = recommender.add_text_to_cbsa(results).to_dict(orient='records')
-            print(type(results))
+            print(len(results))
 
             st.session_state.recommendations = results
 
