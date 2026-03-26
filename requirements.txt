@@ -4,3 +4,5 @@ numpy
 requests
 folium
 streamlit-folium
+openpyxl
+boto3
