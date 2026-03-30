@@ -6,3 +6,4 @@ folium
 streamlit-folium
 openpyxl
 boto3
+plotly
