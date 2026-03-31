@@ -52,12 +52,12 @@ def dummy_similar_cities(city_name):
 standardized_indicies_df = pd.read_csv("data/processed/Final_Enriched_Dataset.csv")
 # standardized_indicies_df = standardized_indicies_df.drop(columns=['Unnamed: 0'])
 
-sample_cbsa = [12420, 19100, 19740, 31080, 39580, 41860, 41940, 42660]
-standardized_indicies_df = standardized_indicies_df[
-    standardized_indicies_df['cbsa_code'].isin(sample_cbsa)
-]
+# sample_cbsa = [12420, 19100, 19740, 31080, 39580, 41860, 41940, 42660]
+# standardized_indicies_df = standardized_indicies_df[
+#     standardized_indicies_df['cbsa_code'].isin(sample_cbsa)
+# ]
 
-print(len(standardized_indicies_df))
+# print(len(standardized_indicies_df))
 
 # -------------------------
 # Initialize Session State
