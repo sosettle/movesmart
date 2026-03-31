@@ -7,8 +7,12 @@ from pathlib import Path
 import pandas as pd
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
+from .cluster_model import build_cluster_mapping
+from .standardize_scores import build_feature_and_composite_scores
 
-DEFAULT_OUTPUT_PATH = Path("data//Final_Merged_Imputed_Dataset.csv")
+
+DEFAULT_OUTPUT_PATH = Path("data/processed/Final_Merged_Imputed_Dataset.csv")
+DEFAULT_ENRICHED_OUTPUT_PATH = Path("data/processed/Final_Enriched_Dataset.csv")
 WALK_PATH = Path("data/processed/Walkability_Data.csv")
 CENSUS_PATH = Path("data/processed/Census_Data.csv")
 PLACES_PATH = Path("data/processed/Places_Data.csv")
@@ -35,6 +39,16 @@ def load_processed_csv(path: str | Path) -> pd.DataFrame:
     df = pd.read_csv(Path(path), dtype={"cbsa_code": str})
     df["cbsa_code"] = df["cbsa_code"].astype(str).str.strip()
     return df
+
+
+def validate_one_row_per_cbsa(df: pd.DataFrame, *, cbsa_col: str = "cbsa_code") -> None:
+    """Raise if the dataframe is not one row per CBSA."""
+    if cbsa_col not in df.columns:
+        raise KeyError(f"Missing required column: {cbsa_col}")
+    dupes = df[cbsa_col].duplicated(keep=False)
+    if dupes.any():
+        examples = df.loc[dupes, cbsa_col].astype(str).head(10).tolist()
+        raise ValueError(f"Expected one row per {cbsa_col}; found duplicates (examples): {examples}")
 
 
 def build_group_medians(df: pd.DataFrame, cols: list[str], group_cols: list[str]) -> pd.DataFrame:
@@ -126,6 +140,7 @@ def build_final_dataset(output_path: str | Path = DEFAULT_OUTPUT_PATH) -> pd.Dat
     final_df["property_crime_per_population"] = final_df["property_crime_count"] / final_df["TotalPopulation_B01003"]
     crime_cols.extend(["violent_crime_per_population", "property_crime_per_population"])
     final_df = reorder_columns(final_df, census_cols, walk_cols, places_cols, crime_cols, weather_cols)
+    validate_one_row_per_cbsa(final_df)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +149,43 @@ def build_final_dataset(output_path: str | Path = DEFAULT_OUTPUT_PATH) -> pd.Dat
     return final_df
 
 
+def build_final_enriched_dataset(
+    *,
+    base_output_path: str | Path = DEFAULT_OUTPUT_PATH,
+    enriched_output_path: str | Path = DEFAULT_ENRICHED_OUTPUT_PATH,
+    save_cluster_artifacts: bool = False,
+) -> pd.DataFrame:
+    """
+    Build the CBSA-level dataset and enrich it with feature scores, composite scores, and cluster labels.
+
+    Output stays at one row per cbsa_code.
+    """
+    base = build_final_dataset(output_path=base_output_path)
+    validate_one_row_per_cbsa(base)
+
+    # 1) Cluster labels must be built from the base features (not from derived score columns).
+    cluster_mapping = build_cluster_mapping(base, save=save_cluster_artifacts)
+    validate_one_row_per_cbsa(cluster_mapping)
+
+    # 2) Feature scores + composite scores.
+    scores = build_feature_and_composite_scores(base)
+    validate_one_row_per_cbsa(scores)
+
+    # Avoid duplicate identifier columns on merge (keep base as the source of IDs).
+    score_payload = scores.drop(columns=[c for c in scores.columns if c in ID_COLUMNS and c != "cbsa_code"])
+
+    out = base.merge(score_payload, on="cbsa_code", how="left", validate="one_to_one")
+    out = out.merge(cluster_mapping, on="cbsa_code", how="left", validate="one_to_one")
+    validate_one_row_per_cbsa(out)
+
+    enriched_output_path = Path(enriched_output_path)
+    enriched_output_path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(enriched_output_path, index=False)
+
+    return out
+
+
 if __name__ == "__main__":
-    df = build_final_dataset()
-    print(f"Wrote {len(df)} rows and {len(df.columns)} columns to {DEFAULT_OUTPUT_PATH}")
+    df = build_final_enriched_dataset()
+    print(f"Wrote {len(df)} rows and {len(df.columns)} columns to {DEFAULT_ENRICHED_OUTPUT_PATH}")
     print("Run from project root with: python -m src.final_dataset_loader")
