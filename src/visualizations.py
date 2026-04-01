@@ -22,6 +22,20 @@ MAP_COLOR_COLUMN_OPTIONS: list[tuple[str, str]] = [
 MAP_COLOR_LABEL_TO_COLUMN: dict[str, str] = dict(MAP_COLOR_COLUMN_OPTIONS)
 MAP_COLUMN_TO_LABEL: dict[str, str] = {col: lab for lab, col in MAP_COLOR_COLUMN_OPTIONS}
 
+# Detail table column order (matches app wording: … health before safety …)
+TABLE_DETAIL_SCORE_COLS: tuple[str, ...] = (
+    "affordability_score",
+    "job_growth_score",
+    "health_score",
+    "safety_score",
+    "education_score",
+    "walkability_score",
+    "diversity_score",
+    "urban_score",
+    "weather_warmth_score",
+    "weather_mildness_score",
+)
+
 MAP_SCORE_GRADIENT_COLUMNS: frozenset = frozenset(
     {
         "affordability_score",
@@ -181,7 +195,8 @@ class Visualization:
         df = self.prepare_plot_df(df)
         top = self.get_top_n(df, 5)
 
-        map_marker_px = 10
+        map_marker_px = 7
+        star_marker_px = max(2, map_marker_px - 2)
         size_vals = np.full(len(df), map_marker_px, dtype=float)
 
         col = color_column if color_column in df.columns else "cluster_label"
@@ -240,7 +255,7 @@ class Visualization:
                 lon=top["centroid_lon"],
                 text=top["city_state"],
                 mode="markers+text",
-                marker=dict(size=map_marker_px, symbol="star", color="#ca8a04", line=dict(width=0.6, color="#292524")),
+                marker=dict(size=star_marker_px, symbol="star", color="#ca8a04", line=dict(width=0.6, color="#292524")),
                 textfont=dict(color="#020617", size=12, family="system-ui, sans-serif"),
                 textposition="top center",
                 name="Top picks",
@@ -283,15 +298,32 @@ class Visualization:
         df = self.prepare_plot_df(df)
         top = self.get_top_n(df, top_n)
 
-        table_df = top[["city_state", "cluster_label", "recommendation_score"]].copy()
-        table_df["recommendation_score"] = table_df["recommendation_score"].map(lambda x: f"{float(x):.2f}")
-        display_df = table_df.rename(
-            columns={
-                "city_state": "Metro",
-                "cluster_label": "Cluster",
-                "recommendation_score": "Recommendation Score",
-            }
-        )
+        def fmt_cell(x) -> str:
+            try:
+                return f"{float(x):.2f}"
+            except (TypeError, ValueError):
+                return "—"
+
+        base_cols = ["city_state", "cluster_label", "recommendation_score"]
+        score_cols = [c for c in TABLE_DETAIL_SCORE_COLS if c in top.columns]
+        table_df = top[base_cols + score_cols].copy()
+
+        for col in ["recommendation_score"] + score_cols:
+            table_df[col] = table_df[col].map(fmt_cell)
+
+        rename = {
+            "city_state": "Metro",
+            "cluster_label": "Cluster",
+            "recommendation_score": "Recommendation Score",
+        }
+        table_score_headers = {
+            "weather_warmth_score": "Weather Warmth",
+            "weather_mildness_score": "Weather Mildness",
+        }
+        for c in score_cols:
+            rename[c] = table_score_headers.get(c, self.DISPLAY_LABELS.get(c, c))
+
+        display_df = table_df.rename(columns=rename)
 
         fig = go.Figure(
             data=[
@@ -299,13 +331,13 @@ class Visualization:
                     header=dict(
                         values=list(display_df.columns),
                         fill_color="#0f172a",
-                        font=dict(color="#f8fafc", size=13),
+                        font=dict(color="#f8fafc", size=11),
                         align="left",
                     ),
                     cells=dict(
                         values=[display_df[col] for col in display_df.columns],
                         fill_color="#f8fafc",
-                        font=dict(color="#0f172a", size=12),
+                        font=dict(color="#0f172a", size=10),
                         align="left",
                     ),
                 )
