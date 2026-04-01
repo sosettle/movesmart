@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping
 
+import numpy as np
 import pandas as pd
 
 
@@ -165,27 +166,50 @@ def score_cities(
     df: pd.DataFrame,
     user_inputs: Mapping[str, float],
     score_cols: list[str] | None = None,
+    scoring_mode: Literal["similarity", "weighted_average"] = "similarity",
 ) -> pd.DataFrame:
-    """Apply weighted preference scoring to the supplied city dataframe."""
+    """Score cities either as profile similarity or as a weighted average of city scores.
+
+    ``similarity`` (default): sliders are treated as a *desired* profile on 0–``SCORE_MAX``,
+    mapped to 0–1 to match stored city dimension scores. Each city gets
+    ``1 - mean((u_i - c_i)²)`` over dimensions, i.e. one minus mean squared error to the
+    user's target vector—higher is a closer match.
+
+    ``weighted_average``: legacy behavior—normalized squared sliders act as *importance*
+    weights only; score is ``sum_i w_i * c_i`` (how objectively high the city is on
+    dimensions the user weights, not closeness to the slider targets). Sliders set to 0
+    receive zero weight (interpreted as “ignore this dimension”).
+    """
     ranked = df.copy()
     score_cols = score_cols or DIMENSION_SCORE_COLS
 
     valid_inputs = {
-        col: rating
+        col: float(rating)
         for col, rating in user_inputs.items()
-        if col in ranked.columns and col in score_cols and rating is not None
+        if col in ranked.columns
+        and col in score_cols
+        and rating is not None
+        and float(rating) >= 0
     }
 
     if not valid_inputs:
         raise ValueError("No valid scoring columns from user_inputs were found in the dataframe.")
 
-    weights = get_preference_weights(valid_inputs)
+    cols = list(valid_inputs.keys())
+    ratings = np.array([valid_inputs[c] for c in cols], dtype=float)
+    u = np.clip(ratings / SCORE_MAX, 0.0, 1.0)
+    city = ranked[cols].to_numpy(dtype=float)
 
-    ranked["recommendation_score"] = 0.0
-    for col, weight in weights.items():
-        ranked["recommendation_score"] += ranked[col] * weight
+    if scoring_mode == "similarity":
+        mse = np.nanmean((city - u) ** 2, axis=1)
+        ranked["recommendation_score"] = (1.0 - mse).clip(0.0, 1.0)
+    elif scoring_mode == "weighted_average":
+        weights = get_preference_weights({c: valid_inputs[c] for c in cols})
+        w = np.array([weights[c] for c in cols], dtype=float)
+        ranked["recommendation_score"] = (city * w).sum(axis=1).clip(0.0, 1.0)
+    else:
+        raise ValueError("scoring_mode must be 'similarity' or 'weighted_average'")
 
-    ranked["recommendation_score"] = ranked["recommendation_score"].clip(0.0, 1.0)
     return ranked
 
 
@@ -226,6 +250,7 @@ def recommend_cities(
     housing_mode: str = "either",
     top_n: int = 30,
     score_cols: list[str] | None = None,
+    scoring_mode: Literal["similarity", "weighted_average"] = "similarity",
 ) -> pd.DataFrame:
     """Return the top recommended cities; all score columns are on a 0–5 scale."""
     ranked = apply_affordability_filter(
@@ -241,6 +266,7 @@ def recommend_cities(
         df=ranked,
         user_inputs=user_inputs,
         score_cols=score_cols,
+        scoring_mode=scoring_mode,
     )
 
     ranked = ranked.sort_values("recommendation_score", ascending=False)
