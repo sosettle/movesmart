@@ -195,7 +195,7 @@ class Visualization:
         df = self.prepare_plot_df(df)
         top = self.get_top_n(df, 5)
 
-        map_marker_px = 7
+        map_marker_px = 9
         star_marker_px = max(2, map_marker_px - 2)
         size_vals = np.full(len(df), map_marker_px, dtype=float)
 
