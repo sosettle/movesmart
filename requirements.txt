@@ -1,9 +1,19 @@
+# Core app + data pipeline
 streamlit
 pandas
 numpy
 requests
+urllib3
 folium
 streamlit-folium
-openpyxl
-boto3
 plotly
+openpyxl
+
+# PLACES loader (spatial join)
+geopandas
+
+# Clustering + scores (final_dataset_loader → models.cluster_model)
+scikit-learn
+
+# Optional: wiki_text_loader (AWS Bedrock)
+boto3

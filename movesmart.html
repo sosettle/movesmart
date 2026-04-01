@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoveSmart — Find Your City</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ink: #0f1c1a;
+    --ink-mid: #2d4442;
+    --ink-light: #5a7672;
+    --paper: #f5f2eb;
+    --paper-warm: #ede8de;
+    --accent: #1a6b56;
+    --accent-bright: #23956e;
+    --accent-light: #d4ede5;
+    --amber: #c07a20;
+    --amber-light: #fdeece;
+    --coral: #c0402a;
+    --coral-light: #fde8e3;
+    --blue: #1d4f8c;
+    --blue-light: #dde9fa;
+    --serif: 'DM Serif Display', Georgia, serif;
+    --sans: 'DM Sans', system-ui, sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 3rem;
+    background: rgba(245,242,235,0.88);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(15,28,26,0.08);
+  }
+  .nav-logo { font-family: var(--serif); font-size: 1.4rem; color: var(--ink); letter-spacing: -0.02em; }
+  .nav-logo span { color: var(--accent-bright); }
+  .nav-links { display: flex; gap: 2rem; list-style: none; }
+  .nav-links a { font-size: 0.875rem; font-weight: 500; color: var(--ink-light); text-decoration: none; transition: color .2s; }
+  .nav-links a:hover { color: var(--accent); }
+  .nav-cta {
+    font-size: 0.875rem; font-weight: 600; padding: 0.5rem 1.25rem;
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    cursor: pointer; text-decoration: none; transition: background .2s, transform .15s;
+  }
+  .nav-cta:hover { background: var(--accent-bright); transform: translateY(-1px); }
+
+  /* ── HERO ── */
+  .hero {
+    min-height: 100vh; display: flex; flex-direction: column;
+    justify-content: center; align-items: flex-start;
+    padding: 8rem 3rem 4rem;
+    position: relative; overflow: hidden;
+  }
+  .hero-bg {
+    position: absolute; inset: 0; z-index: 0;
+    background: radial-gradient(ellipse 70% 60% at 80% 40%, rgba(26,107,86,0.12) 0%, transparent 70%),
+                radial-gradient(ellipse 50% 50% at 15% 70%, rgba(192,122,32,0.08) 0%, transparent 60%);
+  }
+  .hero-map-dots {
+    position: absolute; right: -2rem; top: 50%; transform: translateY(-50%);
+    width: 520px; height: 480px; z-index: 0; opacity: 0.55;
+  }
+  .hero-content { position: relative; z-index: 1; max-width: 660px; }
+  .hero-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-light); padding: 0.35rem 0.85rem;
+    border-radius: 100px; margin-bottom: 1.75rem;
+  }
+  .hero-tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-bright); display: inline-block; }
+  h1 {
+    font-family: var(--serif); font-size: clamp(2.8rem, 6vw, 5rem);
+    line-height: 1.08; letter-spacing: -0.03em; color: var(--ink);
+    margin-bottom: 1.5rem;
+  }
+  h1 em { font-style: italic; color: var(--accent-bright); }
+  .hero-sub {
+    font-size: 1.125rem; color: var(--ink-light); font-weight: 300;
+    max-width: 520px; margin-bottom: 2.5rem; line-height: 1.7;
+  }
+  .hero-actions { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 0.85rem 2rem; background: var(--accent); color: #fff;
+    font-family: var(--sans); font-size: 1rem; font-weight: 600;
+    border: none; border-radius: 10px; cursor: pointer; text-decoration: none;
+    transition: background .2s, transform .15s, box-shadow .2s;
+    box-shadow: 0 4px 20px rgba(26,107,86,0.25);
+  }
+  .btn-primary:hover { background: var(--accent-bright); transform: translateY(-2px); box-shadow: 0 8px 28px rgba(26,107,86,0.3); }
+  .btn-secondary {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 0.85rem 2rem; background: transparent; color: var(--ink);
+    font-family: var(--sans); font-size: 1rem; font-weight: 500;
+    border: 1.5px solid rgba(15,28,26,0.2); border-radius: 10px; cursor: pointer; text-decoration: none;
+    transition: border-color .2s, background .2s;
+  }
+  .btn-secondary:hover { border-color: var(--accent); background: var(--accent-light); }
+
+  .hero-stats {
+    display: flex; gap: 3rem; margin-top: 4rem; padding-top: 2rem;
+    border-top: 1px solid rgba(15,28,26,0.1);
+  }
+  .stat-item { }
+  .stat-num { font-family: var(--serif); font-size: 2rem; color: var(--ink); line-height: 1; }
+  .stat-label { font-size: 0.8rem; color: var(--ink-light); margin-top: 4px; font-weight: 500; }
+
+  /* ── SECTION COMMONS ── */
+  section { padding: 6rem 3rem; }
+  .section-tag {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 1rem; display: block;
+  }
+  h2 {
+    font-family: var(--serif); font-size: clamp(2rem, 4vw, 3rem);
+    letter-spacing: -0.02em; line-height: 1.15; color: var(--ink);
+    margin-bottom: 1.25rem;
+  }
+  .section-sub { font-size: 1.05rem; color: var(--ink-light); max-width: 560px; line-height: 1.7; }
+
+  /* ── HOW IT WORKS ── */
+  .how {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .how .section-tag { color: var(--accent-bright); }
+  .how h2 { color: var(--paper); }
+  .how .section-sub { color: rgba(245,242,235,0.65); }
+  .steps-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 2px; margin-top: 3.5rem;
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; overflow: hidden;
+  }
+  .step {
+    background: rgba(255,255,255,0.04); padding: 2.5rem 2rem;
+    border-right: 1px solid rgba(255,255,255,0.08);
+    transition: background .2s;
+  }
+  .step:last-child { border-right: none; }
+  .step:hover { background: rgba(255,255,255,0.07); }
+  .step-num {
+    font-family: var(--serif); font-size: 3rem; color: var(--accent-bright); opacity: 0.4;
+    line-height: 1; margin-bottom: 1.25rem;
+  }
+  .step h3 { font-size: 1.1rem; font-weight: 600; color: var(--paper); margin-bottom: 0.75rem; }
+  .step p { font-size: 0.9rem; color: rgba(245,242,235,0.55); line-height: 1.7; }
+
+  /* ── THEMES ── */
+  .themes { background: var(--paper-warm); }
+  .themes-header { max-width: 600px; margin-bottom: 3.5rem; }
+  .themes-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.25rem;
+  }
+  .theme-card {
+    background: var(--paper); border-radius: 16px;
+    border: 1px solid rgba(15,28,26,0.07);
+    padding: 1.75rem; transition: transform .2s, box-shadow .2s;
+    cursor: default;
+  }
+  .theme-card:hover { transform: translateY(-4px); box-shadow: 0 16px 40px rgba(15,28,26,0.1); }
+  .theme-icon {
+    width: 48px; height: 48px; border-radius: 12px; display: flex;
+    align-items: center; justify-content: center; font-size: 1.4rem;
+    margin-bottom: 1.25rem;
+  }
+  .theme-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.6rem; color: var(--ink); }
+  .theme-card p { font-size: 0.875rem; color: var(--ink-light); line-height: 1.65; }
+  .theme-indicators { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 6px; }
+  .indicator-tag {
+    font-size: 0.72rem; font-weight: 500; padding: 3px 10px; border-radius: 100px;
+    background: var(--paper-warm); color: var(--ink-mid);
+  }
+
+  /* ── ARCHETYPES ── */
+  .archetypes { background: var(--paper); }
+  .arch-header { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 3rem; }
+  .arch-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.25rem;
+  }
+  .arch-card {
+    border-radius: 20px; padding: 2rem 1.75rem; position: relative; overflow: hidden;
+    transition: transform .2s;
+  }
+  .arch-card:hover { transform: scale(1.02); }
+  .arch-card.dense { background: linear-gradient(135deg, #0f2b38 0%, #1a4a5e 100%); color: #e8f4fb; }
+  .arch-card.affordable { background: linear-gradient(135deg, #1a3a20 0%, #2d6b38 100%); color: #e4f0e6; }
+  .arch-card.outdoor { background: linear-gradient(135deg, #2a2210 0%, #5c4820 100%); color: #f5edda; }
+  .arch-card.suburban { background: linear-gradient(135deg, #2a1020 0%, #5c2845 100%); color: #f5e0ed; }
+  .arch-card h3 { font-family: var(--serif); font-size: 1.4rem; margin-bottom: 0.5rem; }
+  .arch-card .arch-sub { font-size: 0.8rem; opacity: 0.65; margin-bottom: 1.5rem; }
+  .arch-example {
+    font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; opacity: 0.5;
+    text-transform: uppercase; margin-bottom: 0.35rem;
+  }
+  .arch-cities { font-size: 0.9rem; opacity: 0.8; }
+  .arch-badge {
+    position: absolute; top: 1.5rem; right: 1.5rem; width: 40px; height: 40px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 1.25rem; background: rgba(255,255,255,0.12);
+  }
+
+  /* ── AI SUMMARIES ── */
+  .ai-section { background: var(--paper-warm); }
+  .ai-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; align-items: center; }
+  .ai-visual {
+    background: var(--ink); border-radius: 20px; padding: 2rem;
+    font-family: 'Courier New', monospace; font-size: 0.8rem; color: rgba(245,242,235,0.7);
+    line-height: 1.8; position: relative;
+  }
+  .ai-visual::before {
+    content: '⟡ AI-generated city summary';
+    display: block; font-family: var(--sans); font-size: 0.72rem; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--accent-bright); margin-bottom: 1.25rem; padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .ai-highlight { color: #7dd4b0; }
+  .ai-city-name { color: #f5f2eb; font-weight: bold; font-family: var(--sans); font-size: 1rem; display: block; margin-bottom: 0.75rem; }
+  .ai-score-row { display: flex; align-items: center; gap: 10px; margin-top: 1.25rem; }
+  .ai-score-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; flex: 1; }
+  .ai-score-fill { height: 100%; background: var(--accent-bright); border-radius: 2px; }
+  .ai-score-label { font-family: var(--sans); font-size: 0.75rem; color: rgba(245,242,235,0.5); min-width: 90px; }
+  .ai-score-val { font-family: var(--sans); font-size: 0.75rem; color: var(--accent-bright); min-width: 32px; text-align: right; }
+  .ai-text h3 { font-family: var(--serif); font-size: 2rem; margin-bottom: 1rem; letter-spacing: -0.02em; }
+  .ai-text p { font-size: 0.975rem; color: var(--ink-light); line-height: 1.75; margin-bottom: 1rem; }
+  .ai-features { list-style: none; margin-top: 1.5rem; }
+  .ai-features li {
+    display: flex; align-items: flex-start; gap: 12px; padding: 0.7rem 0;
+    border-bottom: 1px solid rgba(15,28,26,0.07); font-size: 0.9rem; color: var(--ink-mid);
+  }
+  .ai-features li:last-child { border-bottom: none; }
+  .ai-features .check { color: var(--accent-bright); font-size: 1rem; flex-shrink: 0; margin-top: 2px; }
+
+  /* ── DATA SOURCES ── */
+  .data { background: var(--paper); }
+  .data-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 1px; background: rgba(15,28,26,0.08); border-radius: 16px; overflow: hidden;
+    margin-top: 3rem;
+  }
+  .data-item {
+    background: var(--paper); padding: 2rem 1.5rem; text-align: center;
+    transition: background .2s;
+  }
+  .data-item:hover { background: var(--accent-light); }
+  .data-icon { font-size: 2rem; margin-bottom: 0.75rem; }
+  .data-name { font-weight: 600; font-size: 0.875rem; color: var(--ink); margin-bottom: 0.4rem; }
+  .data-desc { font-size: 0.78rem; color: var(--ink-light); }
+
+  /* ── MVP ── */
+  .mvp { background: var(--ink); color: var(--paper); }
+  .mvp .section-tag { color: var(--accent-bright); }
+  .mvp h2 { color: var(--paper); }
+  .mvp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; margin-top: 3.5rem; }
+  .mvp-card {
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 2rem;
+    transition: border-color .2s, background .2s;
+  }
+  .mvp-card:hover { border-color: var(--accent-bright); background: rgba(35,149,110,0.06); }
+  .mvp-num { font-family: var(--serif); font-size: 1rem; color: var(--accent-bright); margin-bottom: 1rem; }
+  .mvp-card h3 { font-size: 1rem; font-weight: 600; color: var(--paper); margin-bottom: 0.75rem; }
+  .mvp-card p { font-size: 0.875rem; color: rgba(245,242,235,0.5); line-height: 1.7; }
+
+  /* ── CTA ── */
+  .cta {
+    background: var(--paper-warm);
+    text-align: center; padding: 8rem 3rem;
+    position: relative; overflow: hidden;
+  }
+  .cta-bg {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 80% 70% at 50% 50%, rgba(26,107,86,0.1) 0%, transparent 70%);
+  }
+  .cta-content { position: relative; max-width: 600px; margin: 0 auto; }
+  .cta h2 { margin-bottom: 1.25rem; }
+  .cta p { font-size: 1.05rem; color: var(--ink-light); margin-bottom: 2.5rem; }
+
+  /* ── FOOTER ── */
+  footer {
+    background: var(--ink); color: rgba(245,242,235,0.45);
+    padding: 2.5rem 3rem; display: flex; justify-content: space-between;
+    align-items: center; flex-wrap: wrap; gap: 1rem;
+    font-size: 0.8rem;
+  }
+  footer .footer-logo { font-family: var(--serif); font-size: 1.1rem; color: var(--paper); }
+  footer a { color: rgba(245,242,235,0.45); text-decoration: none; }
+  footer a:hover { color: var(--accent-bright); }
+
+  /* ── ANIMATIONS ── */
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse-dot { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.5); opacity: 0.4; } }
+
+  .fade-up { animation: fadeUp 0.7s ease both; }
+  .delay-1 { animation-delay: 0.1s; }
+  .delay-2 { animation-delay: 0.2s; }
+  .delay-3 { animation-delay: 0.35s; }
+  .delay-4 { animation-delay: 0.5s; }
+
+  @media (max-width: 768px) {
+    nav { padding: 1rem 1.5rem; }
+    .nav-links { display: none; }
+    section { padding: 4rem 1.5rem; }
+    .hero { padding: 6rem 1.5rem 3rem; }
+    .hero-map-dots { display: none; }
+    .hero-stats { gap: 2rem; }
+    .ai-layout { grid-template-columns: 1fr; }
+    footer { flex-direction: column; text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">Move<span>Smart</span></div>
+  <ul class="nav-links">
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#themes">Themes</a></li>
+    <li><a href="#archetypes">City Types</a></li>
+    <li><a href="#data">Data</a></li>
+  </ul>
+  <a href="#cta" class="nav-cta">Try the Dashboard →</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg"></div>
+
+  <!-- Decorative map dot SVG -->
+  <svg class="hero-map-dots" viewBox="0 0 520 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- US outline simplified -->
+    <path d="M80 160 L420 80 L480 200 L440 380 L240 420 L60 340 Z" stroke="rgba(26,107,86,0.18)" stroke-width="1" fill="rgba(26,107,86,0.04)" stroke-linejoin="round"/>
+    <!-- Cluster dots -->
+    <circle cx="160" cy="200" r="18" fill="rgba(26,107,86,0.15)"/>
+    <circle cx="160" cy="200" r="8" fill="rgba(26,107,86,0.35)"/>
+    <circle cx="160" cy="200" r="3" fill="#23956e"/>
+
+    <circle cx="380" cy="180" r="24" fill="rgba(26,107,86,0.12)"/>
+    <circle cx="380" cy="180" r="10" fill="rgba(26,107,86,0.3)"/>
+    <circle cx="380" cy="180" r="4" fill="#23956e"/>
+
+    <circle cx="300" cy="300" r="14" fill="rgba(192,122,32,0.2)"/>
+    <circle cx="300" cy="300" r="6" fill="rgba(192,122,32,0.4)"/>
+    <circle cx="300" cy="300" r="2.5" fill="#c07a20"/>
+
+    <circle cx="200" cy="330" r="10" fill="rgba(26,107,86,0.15)"/>
+    <circle cx="200" cy="330" r="4" fill="rgba(26,107,86,0.3)"/>
+    <circle cx="200" cy="330" r="1.5" fill="#23956e"/>
+
+    <circle cx="100" cy="270" r="8" fill="rgba(192,122,32,0.15)"/>
+    <circle cx="100" cy="270" r="3" fill="#c07a20"/>
+
+    <circle cx="430" cy="310" r="10" fill="rgba(26,107,86,0.12)"/>
+    <circle cx="430" cy="310" r="4" fill="#23956e"/>
+
+    <circle cx="250" cy="180" r="7" fill="rgba(29,79,140,0.2)"/>
+    <circle cx="250" cy="180" r="3" fill="#1d4f8c"/>
+
+    <circle cx="350" cy="250" r="6" fill="rgba(192,64,42,0.2)"/>
+    <circle cx="350" cy="250" r="2.5" fill="#c0402a"/>
+
+    <!-- Connection lines -->
+    <line x1="160" y1="200" x2="250" y2="180" stroke="rgba(26,107,86,0.2)" stroke-width="0.75" stroke-dasharray="4 4"/>
+    <line x1="250" y1="180" x2="380" y2="180" stroke="rgba(26,107,86,0.15)" stroke-width="0.75" stroke-dasharray="4 4"/>
+    <line x1="160" y1="200" x2="200" y2="330" stroke="rgba(26,107,86,0.15)" stroke-width="0.75" stroke-dasharray="4 4"/>
+    <line x1="380" y1="180" x2="430" y2="310" stroke="rgba(26,107,86,0.12)" stroke-width="0.75" stroke-dasharray="4 4"/>
+    <line x1="300" y1="300" x2="430" y2="310" stroke="rgba(192,122,32,0.18)" stroke-width="0.75" stroke-dasharray="4 4"/>
+
+    <!-- Legend -->
+    <circle cx="68" cy="430" r="5" fill="rgba(26,107,86,0.35)"/><circle cx="68" cy="430" r="2.5" fill="#23956e"/>
+    <text x="80" y="434" font-family="DM Sans, sans-serif" font-size="11" fill="rgba(15,28,26,0.4)">High match</text>
+    <circle cx="155" cy="430" r="5" fill="rgba(192,122,32,0.35)"/><circle cx="155" cy="430" r="2.5" fill="#c07a20"/>
+    <text x="167" y="434" font-family="DM Sans, sans-serif" font-size="11" fill="rgba(15,28,26,0.4)">Partial match</text>
+  </svg>
+
+  <div class="hero-content">
+    <div class="hero-tag fade-up">Data-Driven Relocation Intelligence</div>
+    <h1 class="fade-up delay-1">Find the city that fits <em>your</em> life.</h1>
+    <p class="hero-sub fade-up delay-2">
+      MoveSmart analyzes hundreds of economic, social, and environmental indicators across U.S. metropolitan areas — then matches you to places that align with what you actually value.
+    </p>
+    <div class="hero-actions fade-up delay-3">
+      <a href="#cta" class="btn-primary">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2L14 8L8 14M2 8H14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Explore the Dashboard
+      </a>
+      <a href="#how" class="btn-secondary">How it works</a>
+    </div>
+    <div class="hero-stats fade-up delay-4">
+      <div class="stat-item">
+        <div class="stat-num">900+</div>
+        <div class="stat-label">Metro Areas Analyzed</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num">6</div>
+        <div class="stat-label">Life Themes Scored</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-num">5</div>
+        <div class="stat-label">Data Sources</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how" id="how">
+  <span class="section-tag">The Process</span>
+  <h2>From data to your perfect match</h2>
+  <p class="section-sub">We pull from five authoritative public datasets, engineer thematic profiles for every CBSA, and surface cities that match your preferences.</p>
+  <div class="steps-grid">
+    <div class="step">
+      <div class="step-num">01</div>
+      <h3>Data Collection</h3>
+      <p>We aggregate indicators from the Census Bureau, FBI crime statistics, CDC health data, NOAA climate records, and EPA walkability scores.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">02</div>
+      <h3>Theme Engineering</h3>
+      <p>Raw variables are standardized and grouped into six core themes — Affordability, Job Growth, Safety, Diversity, Urban Form, and Outdoor Lifestyle.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">03</div>
+      <h3>City Clustering</h3>
+      <p>PCA + K-Means clustering reveals natural city archetypes — structural similarities that group metros into meaningful, interpretable clusters.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">04</div>
+      <h3>Personalized Matching</h3>
+      <p>You adjust weights across the six themes. Our content-based recommendation engine ranks cities by how closely they match your profile.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">05</div>
+      <h3>AI City Summaries</h3>
+      <p>An LLM reads your top matches and generates natural-language explanations — highlighting why each city fits your specific priorities.</p>
+    </div>
+  </div>
+</section>
+
+<!-- THEMES -->
+<section class="themes" id="themes">
+  <div class="themes-header">
+    <span class="section-tag">What We Measure</span>
+    <h2>Six dimensions of livability</h2>
+    <p class="section-sub">Every metro area receives a score across these themes. You decide how much each one matters to you.</p>
+  </div>
+  <div class="themes-grid">
+    <div class="theme-card">
+      <div class="theme-icon" style="background: var(--accent-light);">🏠</div>
+      <h3>Affordability</h3>
+      <p>How far does your dollar go? We measure housing costs relative to local incomes, factoring in rent burden and cost-of-living pressures.</p>
+      <div class="theme-indicators">
+        <span class="indicator-tag">Median home value</span>
+        <span class="indicator-tag">Rent-to-income ratio</span>
+        <span class="indicator-tag">Housing cost burden</span>
+        <span class="indicator-tag">Median rent</span>
+      </div>
+    </div>
+    <div class="theme-card">
+      <div class="theme-icon" style="background: var(--blue-light);">📈</div>
+      <h3>Job Growth</h3>
+      <p>Economic opportunity and employment stability. Strong job markets offer more than just employment — they signal a city's trajectory.</p>
+      <div class="theme-indicators">
+        <span class="indicator-tag">Employment growth rate</span>
+        <span class="indicator-tag">Unemployment rate</span>
+        <span class="indicator-tag">Industry diversity</span>
+      </div>
+    </div>
+    <div class="theme-card">
+      <div class="theme-icon" style="background: #fde8e3;">🛡️</div>
+      <h3>Safety</h3>
+      <p>Per-capita crime rates normalized for population density. Both violent and property crime contribute to the overall safety score.</p>
+      <div class="theme-indicators">
+        <span class="indicator-tag">Violent crime per capita</span>
+        <span class="indicator-tag">Property crime per capita</span>
+      </div>
+    </div>
+    <div class="theme-card">
+      <div class="theme-icon" style="background: var(--amber-light);">🤝</div>
+      <h3>Diversity</h3>
+      <p>A quantified racial and ethnic diversity index that captures the richness and representation of communities across a metro area.</p>
+      <div class="theme-indicators">
+        <span class="indicator-tag">Racial diversity index</span>
+        <span class="indicator-tag">Ethnic diversity index</span>
+        <span class="indicator-tag">Educational attainment</span>
+      </div>
+    </div>
+    <div class="theme-card">
+      <div class="theme-icon" style="background: var(--accent-light);">🏙️</div>
+      <h3>Urban Form</h3>
+      <p>How dense, walkable, and connected is the city? Urban form shapes daily life — from your commute to spontaneous street-level encounters.</p>
+      <div class="theme-indicators">
+        <span class="indicator-tag">Population density</span>
+        <span class="indicator-tag">Walkability score</span>
+        <span class="indicator-tag">Housing density</span>
+        <span class="indicator-tag">Land area</span>
+      </div>
+    </div>
+    <div class="theme-card">
+      <div class="theme-icon" style="background: var(--blue-light);">🏔️</div>
+      <h3>Outdoor Lifestyle</h3>
+      <p>Access to nature, protected lands, and climate comfort. For those who want the city and the wilderness within reach.</p>
+      <div class="theme-indicators">
+        <span class="indicator-tag">Distance to parks</span>
+        <span class="indicator-tag">Protected land %</span>
+        <span class="indicator-tag">Climate comfort</span>
+        <span class="indicator-tag">Physical activity index</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHETYPES -->
+<section class="archetypes" id="archetypes">
+  <div class="arch-header">
+    <div>
+      <span class="section-tag">Cluster Analysis</span>
+      <h2>City archetypes we've found</h2>
+      <p class="section-sub">K-Means clustering reveals natural groupings of metros with similar structural profiles.</p>
+    </div>
+  </div>
+  <div class="arch-grid">
+    <div class="arch-card dense">
+      <div class="arch-badge">🌆</div>
+      <h3>Dense Urban Metros</h3>
+      <p class="arch-sub">High cost, high connectivity, cultural density</p>
+      <div class="arch-example">Examples include</div>
+      <div class="arch-cities">New York, San Francisco, Boston, Seattle, Chicago</div>
+    </div>
+    <div class="arch-card affordable">
+      <div class="arch-badge">🚀</div>
+      <h3>Affordable Growth Metros</h3>
+      <p class="arch-sub">Expanding economies, lower cost of living</p>
+      <div class="arch-example">Examples include</div>
+      <div class="arch-cities">Austin, Nashville, Raleigh, Phoenix, Charlotte</div>
+    </div>
+    <div class="arch-card outdoor">
+      <div class="arch-badge">🌲</div>
+      <h3>Outdoor Recreation Metros</h3>
+      <p class="arch-sub">Nature access, climate comfort, active lifestyle</p>
+      <div class="arch-example">Examples include</div>
+      <div class="arch-cities">Denver, Salt Lake City, Boise, Asheville, Missoula</div>
+    </div>
+    <div class="arch-card suburban">
+      <div class="arch-badge">🏡</div>
+      <h3>Suburban Family Metros</h3>
+      <p class="arch-sub">Lower density, strong schools, stability</p>
+      <div class="arch-example">Examples include</div>
+      <div class="arch-cities">Minneapolis, Columbus, Omaha, Des Moines, Indianapolis</div>
+    </div>
+  </div>
+</section>
+
+<!-- AI SUMMARIES -->
+<section class="ai-section" id="ai">
+  <div class="ai-layout">
+    <div class="ai-visual">
+      <span class="ai-city-name">Denver, CO — Colorado Metro Area</span>
+      <span style="color: rgba(245,242,235,0.55); font-family: 'DM Sans', sans-serif; font-size: 0.85rem;">
+        Denver emerges as a strong match for your profile, particularly excelling in
+        <span class="ai-highlight">outdoor lifestyle</span> and
+        <span class="ai-highlight">job growth</span>.
+        The metro's proximity to Rocky Mountain National Park and 300+ days of sunshine
+        address your top priorities. The tech sector has grown 14% over 3 years, supporting
+        your career goals. Affordability is moderate — housing costs have risen with growth,
+        but remain below coastal peer cities.
+      </span>
+
+      <div style="margin-top: 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 1.25rem;">
+        <div class="ai-score-row">
+          <span class="ai-score-label">Outdoor Lifestyle</span>
+          <div class="ai-score-bar"><div class="ai-score-fill" style="width:92%"></div></div>
+          <span class="ai-score-val">92</span>
+        </div>
+        <div class="ai-score-row">
+          <span class="ai-score-label">Job Growth</span>
+          <div class="ai-score-bar"><div class="ai-score-fill" style="width:81%"></div></div>
+          <span class="ai-score-val">81</span>
+        </div>
+        <div class="ai-score-row">
+          <span class="ai-score-label">Safety</span>
+          <div class="ai-score-bar"><div class="ai-score-fill" style="width:68%"></div></div>
+          <span class="ai-score-val">68</span>
+        </div>
+        <div class="ai-score-row">
+          <span class="ai-score-label">Affordability</span>
+          <div class="ai-score-bar"><div class="ai-score-fill" style="width:57%"></div></div>
+          <span class="ai-score-val">57</span>
+        </div>
+        <div class="ai-score-row">
+          <span class="ai-score-label">Diversity</span>
+          <div class="ai-score-bar"><div class="ai-score-fill" style="width:72%"></div></div>
+          <span class="ai-score-val">72</span>
+        </div>
+      </div>
+    </div>
+    <div class="ai-text">
+      <span class="section-tag">LLM-Powered Insights</span>
+      <h3>City summaries that actually explain your match</h3>
+      <p>Every recommended city comes with an AI-generated explanation grounded in real data. Not generic city descriptions — but a personalized analysis of why this specific metro aligns with your specific priorities.</p>
+      <p>The language model reads your preference weights and the city's thematic scores, then writes a summary that highlights trade-offs, strengths, and what makes this city uniquely suited to you.</p>
+      <ul class="ai-features">
+        <li><span class="check">✓</span> Explanations tied directly to your weighted preferences</li>
+        <li><span class="check">✓</span> Highlights trade-offs honestly — no city is perfect</li>
+        <li><span class="check">✓</span> Grounded in quantified indicators, not editorial opinion</li>
+        <li><span class="check">✓</span> Updates dynamically as you adjust your preferences</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- DATA SOURCES -->
+<section class="data" id="data">
+  <div style="max-width: 600px; margin-bottom: 1rem;">
+    <span class="section-tag">Data Sources</span>
+    <h2>Built on authoritative public data</h2>
+    <p class="section-sub">Every indicator traces back to a primary government or research source — no proprietary black boxes.</p>
+  </div>
+  <div class="data-grid">
+    <div class="data-item">
+      <div class="data-icon">🏛️</div>
+      <div class="data-name">U.S. Census Bureau</div>
+      <div class="data-desc">American Community Survey — income, housing, demographics</div>
+    </div>
+    <div class="data-item">
+      <div class="data-icon">🚔</div>
+      <div class="data-name">FBI Crime Data</div>
+      <div class="data-desc">Uniform Crime Reports — violent and property crime rates</div>
+    </div>
+    <div class="data-item">
+      <div class="data-icon">🏥</div>
+      <div class="data-name">CDC / PLACES</div>
+      <div class="data-desc">Health outcomes, physical activity, chronic disease indicators</div>
+    </div>
+    <div class="data-item">
+      <div class="data-icon">🌤️</div>
+      <div class="data-name">NOAA Weather</div>
+      <div class="data-desc">Climate normals, temperature, precipitation, comfort indices</div>
+    </div>
+    <div class="data-item">
+      <div class="data-icon">🚶</div>
+      <div class="data-name">EPA Walkability</div>
+      <div class="data-desc">National Walkability Index — pedestrian access and transit</div>
+    </div>
+  </div>
+</section>
+
+<!-- MVP FEATURES -->
+<section class="mvp" id="mvp">
+  <span class="section-tag">What's Built</span>
+  <h2>Minimum Viable Product</h2>
+  <div class="mvp-grid">
+    <div class="mvp-card">
+      <div class="mvp-num">Feature 01</div>
+      <h3>Thematic City Profiles</h3>
+      <p>Every CBSA receives a structured score across six themes, constructed from standardized multi-dataset indicators. The foundation for everything else.</p>
+    </div>
+    <div class="mvp-card">
+      <div class="mvp-num">Feature 02</div>
+      <h3>Cluster Analysis</h3>
+      <p>PCA dimensionality reduction followed by K-Means clustering groups metros into interpretable archetypes with dominant thematic signatures.</p>
+    </div>
+    <div class="mvp-card">
+      <div class="mvp-num">Feature 03</div>
+      <h3>Recommendation Engine</h3>
+      <p>Content-based filtering matches users to CBSAs via weighted distance scoring. Preference sliders translate to a ranked list with match scores.</p>
+    </div>
+    <div class="mvp-card">
+      <div class="mvp-num">Feature 04</div>
+      <h3>LLM City Summaries</h3>
+      <p>A large language model generates personalized natural-language summaries explaining why each recommended city aligns with your stated priorities.</p>
+    </div>
+    <div class="mvp-card">
+      <div class="mvp-num">Feature 05</div>
+      <h3>Interactive Dashboard</h3>
+      <p>A Streamlit application connects everything — preference controls, cluster visualizations, ranked recommendations, and AI-generated explanations in one place.</p>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta" id="cta">
+  <div class="cta-bg"></div>
+  <div class="cta-content">
+    <span class="section-tag">Get Started</span>
+    <h2>Your next city is a few sliders away.</h2>
+    <p>Open the interactive dashboard, dial in your priorities, and explore personalized city recommendations backed by real data.</p>
+    <a href="#" class="btn-primary" style="font-size: 1.05rem; padding: 1rem 2.25rem; margin: 0 auto; display: inline-flex;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2L14 8L8 14M2 8H14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Launch MoveSmart Dashboard
+    </a>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">MoveSmart</div>
+  <div>Data-driven relocation intelligence for U.S. metropolitan areas</div>
+  <div style="display: flex; gap: 1.5rem;">
+    <a href="#how">How it works</a>
+    <a href="#data">Data sources</a>
+    <a href="#mvp">Features</a>
+  </div>
+</footer>
+
+<script>
+  // Smooth scroll for anchor links
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+      const target = document.querySelector(a.getAttribute('href'));
+      if (target) {
+        e.preventDefault();
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  });
+
+  // Intersection observer for fade-up on scroll
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.style.opacity = '1';
+        entry.target.style.transform = 'translateY(0)';
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.theme-card, .arch-card, .mvp-card, .data-item, .step').forEach(el => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(20px)';
+    el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+    observer.observe(el);
+  });
+</script>
+
+</body>
+</html>

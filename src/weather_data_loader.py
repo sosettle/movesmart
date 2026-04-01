@@ -1,353 +1,4 @@
 """
-CBSA-level weather features from NOAA 2006-2020 monthly normals station files.
-
-Example
--------
-from weather_data_loader import load_cbsa_weather_dataset
-
-weather_df = load_cbsa_weather_dataset()
-weather_df.head()
-"""
-
-from __future__ import annotations
-
-import json
-import logging
-import re
-from datetime import datetime
-from pathlib import Path
-from urllib.parse import urljoin
-
-import numpy as np
-import pandas as pd
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
-
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO)
-
-
-NOAA_DEFAULT_BASE_URL = "https://www.ncei.noaa.gov/data/normals-monthly/2006-2020/access/"
-DEFAULT_CACHE_DIR = Path("data/raw/weather/noaa_monthly_normals")
-STATION_SUMMARY_PATH = Path("data/processed/noaa_station_climate_normals_2006_2020.parquet")
-STATION_METADATA_PATH = Path("data/processed/noaa_station_climate_normals_2006_2020_metadata.json")
-
-MONTH_DAY_COUNTS = pd.Series(
-    [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31],
-    index=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-)
-
-STATION_SUMMARY_COLUMNS = [
-    "station_id",
-    "station_name",
-    "station_lat",
-    "station_lon",
-    "avg_annual_temp",
-    "jan_avg_temp",
-    "jul_avg_temp",
-    "annual_precipitation",
-    "annual_snowfall",
-    "n_months_available",
-    "has_complete_year",
-]
-
-
-def create_session() -> requests.Session:
-    session = requests.Session()
-    retry = Retry(
-        total=3,
-        read=3,
-        connect=3,
-        backoff_factor=0.5,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=("GET",),
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
-
-
-def standardize_column_name(name: str) -> str:
-    return re.sub(r"_+", "_", re.sub(r"[^0-9a-z]+", "_", name.strip().lower())).strip("_")
-
-
-def standardize_noaa_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [standardize_column_name(col) for col in df.columns]
-    return df
-
-
-def list_noaa_station_csvs(base_url: str = NOAA_DEFAULT_BASE_URL) -> list[str]:
-    session = create_session()
-    response = session.get(base_url, timeout=60)
-    response.raise_for_status()
-    station_files = re.findall(r'href=["\']([^"\']+\.csv)["\']', response.text, flags=re.IGNORECASE)
-    return list(dict.fromkeys(urljoin(base_url, filename) for filename in station_files))
-
-
-def download_station_csv(
-    url: str,
-    cache_dir: str | Path = DEFAULT_CACHE_DIR,
-) -> Path:
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    path = cache_dir / Path(url).name
-    if path.exists():
-        return path
-
-    session = create_session()
-    response = session.get(url, timeout=60)
-    response.raise_for_status()
-    path.write_bytes(response.content)
-    return path
-
-
-def parse_station_monthly_normals(path: str | Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df = standardize_noaa_columns(df)
-
-    if "mly_snow_normal" not in df.columns:
-        df["mly_snow_normal"] = np.nan
-
-    df = df[
-        [
-            "station",
-            "latitude",
-            "longitude",
-            "name",
-            "month",
-            "mly_tavg_normal",
-            "mly_prcp_normal",
-            "mly_snow_normal",
-        ]
-    ].copy()
-
-    for column in [
-        "latitude",
-        "longitude",
-        "month",
-        "mly_tavg_normal",
-        "mly_prcp_normal",
-        "mly_snow_normal",
-    ]:
-        df[column] = pd.to_numeric(df[column], errors="coerce")
-
-    return df[df["month"].isin(MONTH_DAY_COUNTS.index)].copy()
-
-
-def summarize_station_normals(df: pd.DataFrame) -> pd.DataFrame:
-    if df["mly_tavg_normal"].notna().sum() == 0 or df["mly_prcp_normal"].notna().sum() == 0:
-        return pd.DataFrame(columns=STATION_SUMMARY_COLUMNS)
-
-    month_days = df["month"].map(MONTH_DAY_COUNTS)
-    weighted_temp = (df["mly_tavg_normal"] * month_days).sum(skipna=True)
-    temp_day_total = month_days[df["mly_tavg_normal"].notna()].sum()
-    january = df.loc[df["month"] == 1, "mly_tavg_normal"].dropna()
-    july = df.loc[df["month"] == 7, "mly_tavg_normal"].dropna()
-
-    return pd.DataFrame(
-        [
-            {
-                "station_id": df["station"].iloc[0],
-                "station_name": df["name"].iloc[0],
-                "station_lat": df["latitude"].iloc[0],
-                "station_lon": df["longitude"].iloc[0],
-                "avg_annual_temp": weighted_temp / temp_day_total,
-                "jan_avg_temp": january.iloc[0] if not january.empty else np.nan,
-                "jul_avg_temp": july.iloc[0] if not july.empty else np.nan,
-                "annual_precipitation": df["mly_prcp_normal"].sum(skipna=True),
-                "annual_snowfall": df["mly_snow_normal"].sum(skipna=True)
-                if df["mly_snow_normal"].notna().any()
-                else np.nan,
-                "n_months_available": df["month"].nunique(),
-                "has_complete_year": df["month"].nunique() == 12,
-            }
-        ]
-    )
-
-
-def build_station_climate_normals_from_noaa(
-    base_url: str = NOAA_DEFAULT_BASE_URL,
-    cache_dir: str | Path = DEFAULT_CACHE_DIR,
-    max_files: int | None = None,
-) -> pd.DataFrame:
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    STATION_SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    urls = list_noaa_station_csvs(base_url)
-    if max_files is not None:
-        urls = urls[:max_files]
-
-    summaries = []
-    skipped_files = 0
-
-    for index, url in enumerate(urls, start=1):
-        try:
-            station_path = download_station_csv(url, cache_dir)
-            station_df = parse_station_monthly_normals(station_path)
-            summary_df = summarize_station_normals(station_df)
-            if not summary_df.empty:
-                summaries.append(summary_df)
-        except Exception as exc:  # noqa: BLE001
-            skipped_files += 1
-            logger.warning("Skipping %s: %s", url, exc)
-
-        if index % 100 == 0 or index == len(urls):
-            logger.info("Processed %d/%d NOAA station files", index, len(urls))
-
-    station_climate_df = (
-        pd.concat(summaries, ignore_index=True)
-        if summaries
-        else pd.DataFrame(columns=STATION_SUMMARY_COLUMNS)
-    )
-    station_climate_df.to_parquet(STATION_SUMMARY_PATH, index=False)
-
-    metadata = {
-        "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds"),
-        "base_url": base_url,
-        "cache_dir": str(cache_dir),
-        "file_count": len(urls),
-        "skipped_file_count": skipped_files,
-        "output_path": str(STATION_SUMMARY_PATH),
-    }
-    STATION_METADATA_PATH.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return station_climate_df
-
-
-def load_station_climate_normals(
-    base_url: str = NOAA_DEFAULT_BASE_URL,
-    cache_dir: str | Path = DEFAULT_CACHE_DIR,
-    max_files: int | None = None,
-    force_rebuild: bool = False,
-) -> pd.DataFrame:
-    if STATION_SUMMARY_PATH.exists() and not force_rebuild:
-        return pd.read_parquet(STATION_SUMMARY_PATH)
-    return build_station_climate_normals_from_noaa(base_url=base_url, cache_dir=cache_dir, max_files=max_files)
-
-
-def load_cbsa_centroids(cbsa_path: str | Path = "data/raw/2023_Gaz_cbsa_national.txt") -> pd.DataFrame:
-    df = pd.read_csv(cbsa_path, sep="\t", encoding="utf-8-sig")
-    df.columns = df.columns.str.strip()
-    df = df.rename(
-        columns={
-            "GEOID": "cbsa_code",
-            "NAME": "cbsa_name",
-            "CBSA_TYPE": "cbsa_type",
-            "INTPTLAT": "centroid_lat",
-            "INTPTLONG": "centroid_lon",
-        }
-    )
-    df["cbsa_code"] = df["cbsa_code"].astype(str).str.strip()
-    df["cbsa_name"] = df["cbsa_name"].astype(str).str.strip()
-    df["cbsa_type"] = df["cbsa_type"].astype(str).str.strip()
-    df["centroid_lat"] = pd.to_numeric(df["centroid_lat"], errors="coerce")
-    df["centroid_lon"] = pd.to_numeric(df["centroid_lon"], errors="coerce")
-    return df[["cbsa_code", "cbsa_name", "cbsa_type", "centroid_lat", "centroid_lon"]].copy()
-
-
-def haversine_distance_km(
-    lat1: np.ndarray,
-    lon1: np.ndarray,
-    lat2: np.ndarray,
-    lon2: np.ndarray,
-) -> np.ndarray:
-    earth_radius_km = 6371.0088
-    lat1 = np.radians(lat1)
-    lon1 = np.radians(lon1)
-    lat2 = np.radians(lat2)
-    lon2 = np.radians(lon2)
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-    return earth_radius_km * 2 * np.arcsin(np.sqrt(a))
-
-
-def build_cbsa_weather_features(
-    cbsa_path: str = "data/raw/2023_Gaz_cbsa_national.txt",
-    base_url: str = NOAA_DEFAULT_BASE_URL,
-    cache_dir: str | Path = DEFAULT_CACHE_DIR,
-    max_files: int | None = None,
-    force_rebuild_stations: bool = False,
-) -> pd.DataFrame:
-    cbsa_df = load_cbsa_centroids(cbsa_path)
-    station_df = load_station_climate_normals(
-        base_url=base_url,
-        cache_dir=cache_dir,
-        max_files=max_files,
-        force_rebuild=force_rebuild_stations,
-    ).dropna(subset=["station_lat", "station_lon"])
-
-    cbsa_lat = cbsa_df["centroid_lat"].to_numpy()[:, np.newaxis]
-    cbsa_lon = cbsa_df["centroid_lon"].to_numpy()[:, np.newaxis]
-    station_lat = station_df["station_lat"].to_numpy()[np.newaxis, :]
-    station_lon = station_df["station_lon"].to_numpy()[np.newaxis, :]
-
-    distances = haversine_distance_km(cbsa_lat, cbsa_lon, station_lat, station_lon)
-    nearest_station_index = distances.argmin(axis=1)
-    nearest_station_distance = distances[np.arange(len(cbsa_df)), nearest_station_index]
-    nearest_station_df = station_df.iloc[nearest_station_index].reset_index(drop=True)
-
-    weather_df = cbsa_df.reset_index(drop=True).copy()
-    weather_df["station_id"] = nearest_station_df["station_id"].to_numpy()
-    weather_df["station_name"] = nearest_station_df["station_name"].to_numpy()
-    weather_df["station_distance_km"] = nearest_station_distance
-    weather_df["avg_annual_temp"] = nearest_station_df["avg_annual_temp"].to_numpy()
-    weather_df["jan_avg_temp"] = nearest_station_df["jan_avg_temp"].to_numpy()
-    weather_df["jul_avg_temp"] = nearest_station_df["jul_avg_temp"].to_numpy()
-    weather_df["annual_precipitation"] = nearest_station_df["annual_precipitation"].to_numpy()
-    weather_df["annual_snowfall"] = nearest_station_df["annual_snowfall"].to_numpy()
-    weather_df["n_months_available"] = nearest_station_df["n_months_available"].to_numpy()
-    weather_df["has_complete_year"] = nearest_station_df["has_complete_year"].to_numpy()
-    weather_df["temp_seasonality"] = weather_df["jul_avg_temp"] - weather_df["jan_avg_temp"]
-    weather_df["snow_binary"] = (weather_df["annual_snowfall"] > 0).astype(int)
-
-    return weather_df[
-        [
-            "cbsa_code",
-            "cbsa_name",
-            "cbsa_type",
-            "centroid_lat",
-            "centroid_lon",
-            "station_id",
-            "station_name",
-            "station_distance_km",
-            "avg_annual_temp",
-            "jan_avg_temp",
-            "jul_avg_temp",
-            "annual_precipitation",
-            "annual_snowfall",
-            "n_months_available",
-            "has_complete_year",
-            "temp_seasonality",
-            "snow_binary",
-        ]
-    ]
-
-
-def load_cbsa_weather_dataset(
-    cbsa_path: str = "data/raw/2023_Gaz_cbsa_national.txt",
-    base_url: str = NOAA_DEFAULT_BASE_URL,
-    cache_dir: str | Path = DEFAULT_CACHE_DIR,
-) -> pd.DataFrame:
-    return build_cbsa_weather_features(
-        cbsa_path=cbsa_path,
-        base_url=base_url,
-        cache_dir=cache_dir,
-    )
-
-
-if __name__ == "__main__":
-    weather_df = load_cbsa_weather_dataset()
-    logger.info("Loaded CBSA weather dataset with %d rows and %d columns.", len(weather_df), len(weather_df.columns))
-    print(weather_df.head())
-"""
 CBSA-level weather and climate features built from NOAA 2006–2020 monthly normals.
 
 This module:
@@ -360,7 +11,7 @@ This module:
 
 Example
 -------
-    from weather_data_loader import load_cbsa_weather_dataset
+    from src.weather_data_loader import load_cbsa_weather_dataset
 
     weather_df = load_cbsa_weather_dataset()
     print(weather_df.head())
@@ -372,9 +23,8 @@ import json
 import logging
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -387,7 +37,6 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
-    # Simple default configuration; caller can override.
     logging.basicConfig(level=logging.INFO)
 
 
@@ -395,7 +44,48 @@ NOAA_DEFAULT_BASE_URL = "https://www.ncei.noaa.gov/data/normals-monthly/2006-202
 DEFAULT_CACHE_DIR = Path("data/raw/weather/noaa_monthly_normals")
 STATION_SUMMARY_PATH = Path("data/processed/noaa_station_climate_normals_2006_2020.parquet")
 STATION_METADATA_PATH = Path("data/processed/noaa_station_climate_normals_2006_2020_metadata.json")
+DEFAULT_CBSA_GAZETTEER = Path("data/raw/2023_Gaz_cbsa_national.txt")
 
+# One row per station after summarizing monthly NOAA files (also Parquet schema).
+STATION_SUMMARY_COLUMNS: tuple[str, ...] = (
+    "station_id",
+    "station_name",
+    "station_lat",
+    "station_lon",
+    "avg_annual_temp",
+    "jan_avg_temp",
+    "jul_avg_temp",
+    "annual_precipitation",
+    "annual_snowfall",
+    "n_months_available",
+    "has_complete_year",
+)
+
+# Climate fields copied from the nearest station onto each CBSA row.
+STATION_CLIMATE_COLUMNS: tuple[str, ...] = (
+    "avg_annual_temp",
+    "jan_avg_temp",
+    "jul_avg_temp",
+    "annual_precipitation",
+    "annual_snowfall",
+    "n_months_available",
+    "has_complete_year",
+)
+
+# Final column order for CBSA-level output.
+CBSA_WEATHER_OUTPUT_COLUMNS: tuple[str, ...] = (
+    "cbsa_code",
+    "cbsa_name",
+    "cbsa_type",
+    "centroid_lat",
+    "centroid_lon",
+    "station_id",
+    "station_name",
+    "station_distance_km",
+    *STATION_CLIMATE_COLUMNS,
+    "temp_seasonality",
+    "snow_binary",
+)
 
 MONTH_DAY_COUNTS: dict[int, int] = {
     1: 31,
@@ -433,59 +123,29 @@ def create_session() -> Session:
 
 def standardize_column_name(name: str) -> str:
     """Convert NOAA column names to lowercase snake_case."""
-    name = name.strip()
-    name = name.lower()
-    # Replace non-alphanumeric characters with underscore.
+    name = name.strip().lower()
     name = re.sub(r"[^0-9a-z]+", "_", name)
-    # Collapse multiple underscores and strip leading/trailing.
-    name = re.sub(r"_+", "_", name).strip("_")
-    return name
+    return re.sub(r"_+", "_", name).strip("_")
 
 
 def standardize_noaa_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Standardize NOAA station CSV columns to lowercase snake_case.
-
-    Examples of mappings:
-        STATION         -> station
-        LATITUDE        -> latitude
-        LONGITUDE       -> longitude
-        NAME            -> name
-        month           -> month
-        MLY-TAVG-NORMAL -> mly_tavg_normal
-        MLY-PRCP-NORMAL -> mly_prcp_normal
-        MLY-SNOW-NORMAL -> mly_snow_normal
-    """
+    """Standardize NOAA station CSV columns to lowercase snake_case."""
     df = df.copy()
     df.columns = [standardize_column_name(c) for c in df.columns]
     return df
 
 
-def list_noaa_station_csvs(base_url: str = NOAA_DEFAULT_BASE_URL) -> List[str]:
-    """
-    Retrieve the NOAA directory HTML and parse all station CSV URLs.
-
-    Parameters
-    ----------
-    base_url:
-        Base NOAA directory URL for 2006–2020 normals.
-
-    Returns
-    -------
-    List of full URLs for per-station CSV files.
-    """
+def list_noaa_station_csvs(base_url: str = NOAA_DEFAULT_BASE_URL) -> list[str]:
+    """Retrieve the NOAA directory HTML and parse all station CSV URLs."""
     session = create_session()
     resp: Response = session.get(base_url, timeout=60)
     if resp.status_code != 200:
         raise RuntimeError(f"Failed to fetch NOAA directory listing: HTTP {resp.status_code}")
 
-    html = resp.text
-    # Simple anchor tag parsing; NOAA directory is a static index page.
-    csv_files = re.findall(r'href=["\']([^"\']+?\.csv)["\']', html, flags=re.IGNORECASE)
+    csv_files = re.findall(r'href=["\']([^"\']+?\.csv)["\']', resp.text, flags=re.IGNORECASE)
     urls = [urljoin(base_url, f) for f in csv_files]
-    # Deduplicate while preserving order.
     seen: set[str] = set()
-    out: List[str] = []
+    out: list[str] = []
     for u in urls:
         if u not in seen:
             seen.add(u)
@@ -498,16 +158,11 @@ def download_station_csv(
     url: str,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
 ) -> Path:
-    """
-    Download one station CSV to a local cache directory.
-
-    If the file already exists locally, reuse it instead of downloading again.
-    """
+    """Download one station CSV to a local cache directory (skip if already present)."""
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = Path(url).name
-    dest = cache_dir / filename
+    dest = cache_dir / Path(url).name
     if dest.exists() and dest.stat().st_size > 0:
         return dest
 
@@ -522,12 +177,7 @@ def download_station_csv(
 
 
 def parse_station_monthly_normals(path: str | Path) -> pd.DataFrame:
-    """
-    Load one station CSV and return monthly rows for that station.
-
-    The returned DataFrame has standardized, typed columns and keeps only
-    the subset needed for downstream climate summaries.
-    """
+    """Load one station CSV and return typed monthly rows for downstream summaries."""
     path = Path(path)
     try:
         df = pd.read_csv(path)
@@ -540,14 +190,12 @@ def parse_station_monthly_normals(path: str | Path) -> pd.DataFrame:
 
     df = standardize_noaa_columns(df)
 
-    # Ensure presence of core identifier columns.
     required_id_cols = ["station", "latitude", "longitude", "name", "month"]
     for col in required_id_cols:
         if col not in df.columns:
             logger.warning("Station CSV %s missing required column '%s'; skipping", path, col)
             return pd.DataFrame()
 
-    # Keep only the needed columns; others are dropped to keep things tidy.
     keep_cols = [
         "station",
         "latitude",
@@ -560,7 +208,6 @@ def parse_station_monthly_normals(path: str | Path) -> pd.DataFrame:
     ]
     df = df[[c for c in keep_cols if c in df.columns]].copy()
 
-    # Cast dtypes.
     df["month"] = pd.to_numeric(df["month"], errors="coerce").astype("Int64")
     df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
     df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
@@ -569,51 +216,20 @@ def parse_station_monthly_normals(path: str | Path) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Drop rows with invalid month values.
     df = df[df["month"].between(1, 12, inclusive="both")]
-    if df.empty:
-        return df
-
     return df
 
 
 def summarize_station_normals(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Summarize one-station monthly normals into a single-row station summary.
-
-    Output columns:
-        - station_id
-        - station_name
-        - station_lat
-        - station_lon
-        - avg_annual_temp
-        - jan_avg_temp
-        - jul_avg_temp
-        - annual_precipitation
-        - annual_snowfall
-        - n_months_available
-        - has_complete_year
-
-    Rules:
-        - Require at least some non-null MLY-TAVG-NORMAL and MLY-PRCP-NORMAL
-          values or return an empty DataFrame.
-        - If fewer than 12 distinct months exist, still return a row but
-          has_complete_year is False.
-        - If snowfall column is missing or entirely NaN, annual_snowfall is NaN.
-    """
-    if df.empty:
+    """Summarize one station's monthly normals into a single-row DataFrame."""
+    if df.empty or "station" not in df.columns:
         return pd.DataFrame()
 
-    # Defensive copy and ensure we are looking at a single station.
     df = df.copy()
-    if "station" not in df.columns:
-        return pd.DataFrame()
-
     temp = df.get("mly_tavg_normal")
     prcp = df.get("mly_prcp_normal")
 
     if temp is None or prcp is None:
-        # Missing core climate variables – do not create a summary row.
         return pd.DataFrame()
 
     temp = pd.to_numeric(temp, errors="coerce")
@@ -627,7 +243,6 @@ def summarize_station_normals(df: pd.DataFrame) -> pd.DataFrame:
     n_months_available = int(len(months_present))
     has_complete_year = n_months_available == 12
 
-    # Day-weighted annual average temperature.
     month_days = df["month"].map(MONTH_DAY_COUNTS)
     mask_temp = temp.notna() & month_days.notna()
     if mask_temp.any():
@@ -635,15 +250,11 @@ def summarize_station_normals(df: pd.DataFrame) -> pd.DataFrame:
     else:
         avg_annual_temp = math.nan
 
-    # January and July average temperatures.
-    jan_mask = df["month"] == 1
-    jul_mask = df["month"] == 7
-    jan_vals = temp[jan_mask].dropna()
-    jul_vals = temp[jul_mask].dropna()
+    jan_vals = temp[df["month"] == 1].dropna()
+    jul_vals = temp[df["month"] == 7].dropna()
     jan_avg_temp = float(jan_vals.iloc[0]) if not jan_vals.empty else math.nan
     jul_avg_temp = float(jul_vals.iloc[0]) if not jul_vals.empty else math.nan
 
-    # Annual precipitation and snowfall.
     annual_precipitation = float(prcp.dropna().sum()) if prcp.notna().any() else math.nan
 
     snow = df.get("mly_snow_normal")
@@ -653,30 +264,20 @@ def summarize_station_normals(df: pd.DataFrame) -> pd.DataFrame:
         snow = pd.to_numeric(snow, errors="coerce")
         annual_snowfall = float(snow.dropna().sum()) if snow.notna().any() else math.nan
 
-    # Basic identifiers: station id, name, coordinates.
-    station_id = str(df["station"].iloc[0])
-    station_name = str(df.get("name", pd.Series([""])).iloc[0])
-    station_lat = float(df.get("latitude", pd.Series([math.nan])).iloc[0])
-    station_lon = float(df.get("longitude", pd.Series([math.nan])).iloc[0])
-
-    out = pd.DataFrame(
-        [
-            {
-                "station_id": station_id,
-                "station_name": station_name,
-                "station_lat": station_lat,
-                "station_lon": station_lon,
-                "avg_annual_temp": avg_annual_temp,
-                "jan_avg_temp": jan_avg_temp,
-                "jul_avg_temp": jul_avg_temp,
-                "annual_precipitation": annual_precipitation,
-                "annual_snowfall": annual_snowfall,
-                "n_months_available": n_months_available,
-                "has_complete_year": has_complete_year,
-            }
-        ]
-    )
-    return out
+    row = {
+        "station_id": str(df["station"].iloc[0]),
+        "station_name": str(df.get("name", pd.Series([""])).iloc[0]),
+        "station_lat": float(df.get("latitude", pd.Series([math.nan])).iloc[0]),
+        "station_lon": float(df.get("longitude", pd.Series([math.nan])).iloc[0]),
+        "avg_annual_temp": avg_annual_temp,
+        "jan_avg_temp": jan_avg_temp,
+        "jul_avg_temp": jul_avg_temp,
+        "annual_precipitation": annual_precipitation,
+        "annual_snowfall": annual_snowfall,
+        "n_months_available": n_months_available,
+        "has_complete_year": has_complete_year,
+    }
+    return pd.DataFrame([row], columns=list(STATION_SUMMARY_COLUMNS))
 
 
 def build_station_climate_normals_from_noaa(
@@ -684,16 +285,7 @@ def build_station_climate_normals_from_noaa(
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     max_files: int | None = None,
 ) -> pd.DataFrame:
-    """
-    Build station-level climate normals from NOAA monthly normals.
-
-    This function:
-        - Lists all NOAA station CSVs.
-        - Downloads and parses them with retry and local caching.
-        - Summarizes each station to one row.
-        - Concatenates all station summaries into one DataFrame.
-        - Saves the combined summary to a Parquet file plus a small metadata JSON.
-    """
+    """Download/parse NOAA station CSVs and write Parquet + metadata JSON."""
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     STATION_SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -729,7 +321,6 @@ def build_station_climate_normals_from_noaa(
 
         summary_df = summarize_station_normals(monthly_df)
         if summary_df.empty:
-            # Either incomplete required variables or otherwise unusable.
             continue
 
         summaries.append(summary_df)
@@ -749,27 +340,12 @@ def build_station_climate_normals_from_noaa(
     if summaries:
         stations_df = pd.concat(summaries, ignore_index=True)
     else:
-        stations_df = pd.DataFrame(
-            columns=[
-                "station_id",
-                "station_name",
-                "station_lat",
-                "station_lon",
-                "avg_annual_temp",
-                "jan_avg_temp",
-                "jul_avg_temp",
-                "annual_precipitation",
-                "annual_snowfall",
-                "n_months_available",
-                "has_complete_year",
-            ]
-        )
+        stations_df = pd.DataFrame(columns=list(STATION_SUMMARY_COLUMNS))
 
-    # Persist results for reproducibility.
     stations_df.to_parquet(STATION_SUMMARY_PATH, index=False)
 
     metadata = {
-        "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds"),
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "base_url": base_url,
         "cache_dir": str(Path(cache_dir).as_posix()),
         "n_files_total": n_files_total,
@@ -789,28 +365,14 @@ def load_station_climate_normals(
     max_files: int | None = None,
     force_rebuild: bool = False,
 ) -> pd.DataFrame:
-    """
-    Load or build the combined station climate normals dataset.
-
-    If the Parquet summary already exists and force_rebuild=False, this simply
-    reads the file. Otherwise, it calls build_station_climate_normals_from_noaa().
-    """
+    """Load cached station Parquet or rebuild from NOAA."""
     if STATION_SUMMARY_PATH.exists() and not force_rebuild:
         return pd.read_parquet(STATION_SUMMARY_PATH)
     return build_station_climate_normals_from_noaa(base_url=base_url, cache_dir=cache_dir, max_files=max_files)
 
 
-def load_cbsa_centroids(cbsa_path: str | Path = "data/raw/census/2023_Gaz_cbsa_national.txt") -> pd.DataFrame:
-    """
-    Load CBSA centroids from the Census Gazetteer file.
-
-    Returns DataFrame with:
-        - cbsa_code
-        - cbsa_name
-        - cbsa_type
-        - centroid_lat
-        - centroid_lon
-    """
+def load_cbsa_centroids(cbsa_path: str | Path = DEFAULT_CBSA_GAZETTEER) -> pd.DataFrame:
+    """Load CBSA centroids from the Census Gazetteer (tab-separated)."""
     path = Path(cbsa_path)
     df = pd.read_csv(path, sep="\t", encoding="utf-8-sig")
     df.columns = df.columns.str.strip()
@@ -825,7 +387,6 @@ def load_cbsa_centroids(cbsa_path: str | Path = "data/raw/census/2023_Gaz_cbsa_n
         }
     )
 
-    # Normalize identifier and coordinate types.
     df["cbsa_code"] = df["cbsa_code"].astype(str).str.strip()
     df["cbsa_name"] = df["cbsa_name"].astype(str).str.strip()
     df["cbsa_type"] = df["cbsa_type"].astype(str).str.strip()
@@ -841,13 +402,8 @@ def haversine_distance_km(
     lat2: np.ndarray,
     lon2: np.ndarray,
 ) -> np.ndarray:
-    """
-    Compute great-circle distance between two sets of points using the haversine formula.
-
-    Inputs are in degrees; output is in kilometers. Arrays are broadcast as needed.
-    """
-    # Earth radius in kilometers.
-    R = 6371.0088
+    """Great-circle distance in km; inputs in degrees; arrays broadcast."""
+    r_earth_km = 6371.0088
 
     lat1_rad = np.radians(lat1)
     lon1_rad = np.radians(lon1)
@@ -859,39 +415,17 @@ def haversine_distance_km(
 
     a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2.0) ** 2
     c = 2 * np.arcsin(np.sqrt(a))
-    return R * c
+    return r_earth_km * c
 
 
 def attach_nearest_station_to_cbsa(
     cbsa_df: pd.DataFrame,
     station_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Map each CBSA centroid to its nearest station and attach climate features.
-
-    Returns a tidy CBSA-level DataFrame with:
-        - cbsa_code
-        - cbsa_name
-        - cbsa_type
-        - centroid_lat
-        - centroid_lon
-        - station_id
-        - station_name
-        - station_distance_km
-        - avg_annual_temp
-        - jan_avg_temp
-        - jul_avg_temp
-        - annual_precipitation
-        - annual_snowfall
-        - n_months_available
-        - has_complete_year
-        - temp_seasonality
-        - snow_binary
-    """
+    """Map each CBSA centroid to its nearest station and attach climate features."""
     cbsa_df = cbsa_df.copy()
     station_df = station_df.copy()
 
-    # Drop stations with missing coordinates.
     station_df = station_df.dropna(subset=["station_lat", "station_lon"])
     if station_df.empty:
         raise ValueError("No station climate records with valid coordinates are available.")
@@ -899,7 +433,6 @@ def attach_nearest_station_to_cbsa(
     cbsa_coords = cbsa_df[["centroid_lat", "centroid_lon"]].to_numpy(dtype=float)
     station_coords = station_df[["station_lat", "station_lon"]].to_numpy(dtype=float)
 
-    # Compute pairwise distances via broadcasting: (n_cbsa, n_station)
     cbsa_lat = cbsa_coords[:, 0][:, np.newaxis]
     cbsa_lon = cbsa_coords[:, 1][:, np.newaxis]
     station_lat = station_coords[:, 0][np.newaxis, :]
@@ -915,61 +448,37 @@ def attach_nearest_station_to_cbsa(
     cbsa_df["station_name"] = nearest_stations["station_name"].values
     cbsa_df["station_distance_km"] = nearest_dist_km
 
-    # Attach climate variables and completeness flags.
-    for col in [
-        "avg_annual_temp",
-        "jan_avg_temp",
-        "jul_avg_temp",
-        "annual_precipitation",
-        "annual_snowfall",
-        "n_months_available",
-        "has_complete_year",
-    ]:
+    for col in STATION_CLIMATE_COLUMNS:
         cbsa_df[col] = nearest_stations[col].values
 
-    # Optional derived fields.
     cbsa_df["temp_seasonality"] = cbsa_df["jul_avg_temp"] - cbsa_df["jan_avg_temp"]
     cbsa_df["snow_binary"] = np.where(cbsa_df["annual_snowfall"] > 0, 1, 0)
 
-    # Reorder columns to match specification.
-    cols_order = [
-        "cbsa_code",
-        "cbsa_name",
-        "cbsa_type",
-        "centroid_lat",
-        "centroid_lon",
-        "station_id",
-        "station_name",
-        "station_distance_km",
-        "avg_annual_temp",
-        "jan_avg_temp",
-        "jul_avg_temp",
-        "annual_precipitation",
-        "annual_snowfall",
-        "n_months_available",
-        "has_complete_year",
-        "temp_seasonality",
-        "snow_binary",
-    ]
-    cbsa_df = cbsa_df[cols_order]
-    return cbsa_df
+    return cbsa_df[list(CBSA_WEATHER_OUTPUT_COLUMNS)]
 
 
-def build_cbsa_weather_features(
-    cbsa_path: str = "data/raw/2023_Gaz_cbsa_national.txt",
+def load_cbsa_weather_dataset(
+    cbsa_path: str | Path = DEFAULT_CBSA_GAZETTEER,
     base_url: str = NOAA_DEFAULT_BASE_URL,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     max_files: int | None = None,
     force_rebuild_stations: bool = False,
 ) -> pd.DataFrame:
     """
-    High-level wrapper to build CBSA-level weather features.
+    Build CBSA-level weather features: gazetteer → station normals (cache or NOAA) → nearest station.
 
-    Steps:
-        1. Load CBSA centroids from Gazetteer file.
-        2. Build or load station climate summaries from NOAA monthly normals.
-        3. Map each CBSA to its nearest station.
-        4. Join station climate features to CBSA.
+    Parameters
+    ----------
+    cbsa_path:
+        Census Gazetteer CBSA file (tab-separated).
+    base_url:
+        NOAA 2006–2020 monthly normals directory.
+    cache_dir:
+        Local cache for per-station CSV downloads.
+    max_files:
+        Optional cap on NOAA files (testing).
+    force_rebuild_stations:
+        If True, rebuild the station Parquet even when it exists.
     """
     cbsa_df = load_cbsa_centroids(cbsa_path)
     station_df = load_station_climate_normals(
@@ -978,52 +487,22 @@ def build_cbsa_weather_features(
         max_files=max_files,
         force_rebuild=force_rebuild_stations,
     )
-    cbsa_weather_df = attach_nearest_station_to_cbsa(cbsa_df, station_df)
-    return cbsa_weather_df
+    return attach_nearest_station_to_cbsa(cbsa_df, station_df)
 
 
-def load_cbsa_weather_dataset(
-    cbsa_path: str = "data/raw/2023_Gaz_cbsa_national.txt",
-    base_url: str = NOAA_DEFAULT_BASE_URL,
-    cache_dir: str | Path = DEFAULT_CACHE_DIR,
-) -> pd.DataFrame:
-    """
-    Notebook-friendly convenience function: build CBSA-level weather dataset.
-
-    Parameters
-    ----------
-    cbsa_path:
-        Path to Census Gazetteer CBSA file (tab-separated).
-    base_url:
-        Base NOAA directory for 2006–2020 monthly normals.
-    cache_dir:
-        Local directory for caching downloaded NOAA station CSVs.
-
-    Returns
-    -------
-    DataFrame with one row per CBSA and the weather/climate columns described
-    in attach_nearest_station_to_cbsa().
-
-    Example
-    -------
-        from weather_data_loader import load_cbsa_weather_dataset
-
-        weather_df = load_cbsa_weather_dataset()
-        weather_df.head()
-    """
-    return build_cbsa_weather_features(
-        cbsa_path=cbsa_path,
-        base_url=base_url,
-        cache_dir=cache_dir,
-    )
+build_cbsa_weather_features = load_cbsa_weather_dataset
 
 
 if __name__ == "__main__":
+    # Writes data/processed/Weather_Data.csv. First run downloads many NOAA files (hours).
+    out = Path("data/processed/Weather_Data.csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
     weather_df = load_cbsa_weather_dataset()
+    weather_df.to_csv(out, index=False)
     logger.info(
-        "Loaded CBSA weather dataset with %d rows and %d columns.",
+        "Wrote %d rows to %s (%d columns).",
         len(weather_df),
+        out,
         len(weather_df.columns),
     )
     print(weather_df.head())
-

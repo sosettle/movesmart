@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Mapping
 
 import pandas as pd
 
+
+# Enriched CSV keeps 0–1 scores; all recommendation outputs use 0–5 (same range as sliders).
+SCORE_MAX = 5.0
+DISPLAY_DECIMALS = 2
 
 DIMENSION_SCORE_COLS = [
     "affordability_score",
@@ -77,6 +82,29 @@ def build_dimension_scores(feature_scores_df: pd.DataFrame) -> pd.DataFrame:
     df[DIMENSION_SCORE_COLS] = df[DIMENSION_SCORE_COLS].clip(0.0, 1.0)
     return df
 
+
+def _score_column_names_for_0_5(df: pd.DataFrame) -> list[str]:
+    """Dimension, recommendation, and per-feature score columns (stored 0–1 in CSV)."""
+    names: list[str] = []
+    for col in df.columns:
+        if col in DIMENSION_SCORE_COLS or col == "recommendation_score":
+            names.append(col)
+        elif col.endswith("_feature_score"):
+            names.append(col)
+    return names
+
+
+def scale_stored_scores_to_0_5(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert stored 0–1 scores to 0–5 (linear; ranking unchanged)."""
+    out = df.copy()
+    hi = SCORE_MAX
+    for col in _score_column_names_for_0_5(out):
+        if col not in out.columns:
+            continue
+        s = pd.to_numeric(out[col], errors="coerce")
+        if s.notna().any():
+            out[col] = (s * hi).clip(0.0, hi).round(DISPLAY_DECIMALS)
+    return out
 
 
 def get_preference_weights(user_inputs: Mapping[str, float]) -> dict[str, float]:
@@ -161,17 +189,45 @@ def score_cities(
     return ranked
 
 
+def add_text_to_cbsa(
+    df: pd.DataFrame,
+    wiki_path: str | Path = "data/processed/cbsa_wiki_wikivoyage_summaries_df.csv",
+) -> pd.DataFrame:
+    """Attach wiki/tagline/summary text by cbsa_code (optional file)."""
+    out = df.copy()
+    if "cbsa_code" not in out.columns:
+        return out
+    out["cbsa_code"] = out["cbsa_code"].astype(str).str.strip()
+    path = Path(wiki_path)
+    text_cols = ("city_wiki_wikivoyage_text", "tagline", "summary")
+    if not path.is_file():
+        for col in text_cols:
+            if col not in out.columns:
+                out[col] = ""
+        return out
+    wiki = pd.read_csv(path, dtype={"cbsa_code": str})
+    wiki["cbsa_code"] = wiki["cbsa_code"].astype(str).str.strip()
+    keep = ["cbsa_code"] + [c for c in text_cols if c in wiki.columns]
+    wiki = wiki[keep].drop_duplicates(subset=["cbsa_code"], keep="last")
+    out = out.drop(columns=[c for c in text_cols if c in out.columns], errors="ignore")
+    out = out.merge(wiki, on="cbsa_code", how="left")
+    for col in text_cols:
+        if col not in out.columns:
+            out[col] = ""
+        else:
+            out[col] = out[col].fillna("").astype(str)
+    return out
+
 
 def recommend_cities(
     df: pd.DataFrame,
     user_inputs: Mapping[str, float],
     user_income: float | None = None,
     housing_mode: str = "either",
-    top_n: int = 10,
+    top_n: int = 30,
     score_cols: list[str] | None = None,
-    score_scale: str = "0-1",
 ) -> pd.DataFrame:
-    """Return the top recommended cities based on preferences and affordability."""
+    """Return the top recommended cities; all score columns are on a 0–5 scale."""
     ranked = apply_affordability_filter(
         df=df,
         user_income=user_income,
@@ -187,10 +243,6 @@ def recommend_cities(
         score_cols=score_cols,
     )
 
-    if score_scale == "0-100":
-        ranked["recommendation_score"] = ranked["recommendation_score"] * 100.0
-    elif score_scale != "0-1":
-        raise ValueError("score_scale must be '0-1' or '0-100'.")
-
     ranked = ranked.sort_values("recommendation_score", ascending=False)
-    return ranked.head(top_n)
+    out = ranked.head(top_n).copy()
+    return scale_stored_scores_to_0_5(out)

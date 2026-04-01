@@ -7,12 +7,12 @@ from pathlib import Path
 import pandas as pd
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
-from .cluster_model import build_cluster_mapping
+from models.cluster_model import build_cluster_mapping
 from .standardize_scores import build_feature_and_composite_scores
 
 
-DEFAULT_OUTPUT_PATH = Path("data/processed/Final_Merged_Imputed_Dataset.csv")
-DEFAULT_ENRICHED_OUTPUT_PATH = Path("data/processed/Final_Enriched_Dataset.csv")
+DEFAULT_OUTPUT_PATH = Path("data/final/Final_Base_Dataset.csv")
+DEFAULT_ENRICHED_OUTPUT_PATH = Path("data/final/Final_Enriched_Dataset.csv")
 WALK_PATH = Path("data/processed/Walkability_Data.csv")
 CENSUS_PATH = Path("data/processed/Census_Data.csv")
 PLACES_PATH = Path("data/processed/Places_Data.csv")
@@ -32,6 +32,14 @@ NON_IMPUTED_COLUMNS = {
     "station_name",
 }
 ZERO_FILL_COLUMNS = {"annual_snowfall"}
+
+
+def drop_puerto_rico_cbsas(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove Puerto Rico metro/micro areas (state == PR). Used before score scaling only."""
+    if "state" not in df.columns:
+        return df
+    st = df["state"].astype(str).str.strip().str.upper()
+    return df.loc[~st.eq("PR")].copy()
 
 
 def load_processed_csv(path: str | Path) -> pd.DataFrame:
@@ -102,7 +110,7 @@ def reorder_columns(
 
 
 def build_final_dataset(output_path: str | Path = DEFAULT_OUTPUT_PATH) -> pd.DataFrame:
-    """Merge processed CBSA datasets, clean columns, and write the final modeling dataset."""
+    """Merge processed CBSA datasets (all U.S. CBSAs including PR), impute, and write the base dataset."""
     walk = load_processed_csv(WALK_PATH)
     census = load_processed_csv(CENSUS_PATH)
     places = load_processed_csv(PLACES_PATH)
@@ -153,22 +161,27 @@ def build_final_enriched_dataset(
     *,
     base_output_path: str | Path = DEFAULT_OUTPUT_PATH,
     enriched_output_path: str | Path = DEFAULT_ENRICHED_OUTPUT_PATH,
-    save_cluster_artifacts: bool = False,
+    save_cluster_artifacts: bool = True,
 ) -> pd.DataFrame:
     """
     Build the CBSA-level dataset and enrich it with feature scores, composite scores, and cluster labels.
 
-    Output stays at one row per cbsa_code.
+    When ``save_cluster_artifacts`` is True (default), writes under ``data/clustering_output/``:
+    ``Dataset_with_Cluster_Labels.csv``, ``CBSACODE_Cluster_Labels_Only.csv``,
+    ``Clustering_Evaluation_Metrics.csv``, and ``Cluster_Label_Names.csv``.
+
+    Output stays at one row per cbsa_code (mainland only in the enriched CSV; PR excluded after merge).
     """
     base = build_final_dataset(output_path=base_output_path)
     validate_one_row_per_cbsa(base)
 
-    # 1) Cluster labels must be built from the base features (not from derived score columns).
+    # 1) Cluster on full base (includes Puerto Rico CBSAs).
     cluster_mapping = build_cluster_mapping(base, save=save_cluster_artifacts)
     validate_one_row_per_cbsa(cluster_mapping)
 
-    # 2) Feature scores + composite scores.
-    scores = build_feature_and_composite_scores(base)
+    # 2) Feature scores + composites: exclude PR (scaling / dimension scores are mainland-only).
+    base_for_scores = drop_puerto_rico_cbsas(base)
+    scores = build_feature_and_composite_scores(base_for_scores)
     validate_one_row_per_cbsa(scores)
 
     # Avoid duplicate identifier columns on merge (keep base as the source of IDs).
@@ -176,6 +189,9 @@ def build_final_enriched_dataset(
 
     out = base.merge(score_payload, on="cbsa_code", how="left", validate="one_to_one")
     out = out.merge(cluster_mapping, on="cbsa_code", how="left", validate="one_to_one")
+    validate_one_row_per_cbsa(out)
+
+    out = drop_puerto_rico_cbsas(out)
     validate_one_row_per_cbsa(out)
 
     enriched_output_path = Path(enriched_output_path)
@@ -186,6 +202,7 @@ def build_final_enriched_dataset(
 
 
 if __name__ == "__main__":
-    df = build_final_enriched_dataset()
+    df = build_final_enriched_dataset(save_cluster_artifacts=True)
     print(f"Wrote {len(df)} rows and {len(df.columns)} columns to {DEFAULT_ENRICHED_OUTPUT_PATH}")
+    print("Cluster artifacts: data/clustering_output/")
     print("Run from project root with: python -m src.final_dataset_loader")
